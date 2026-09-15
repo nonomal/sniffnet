@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::Formatter;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum Country {
     AD,
     AE,
@@ -252,13 +253,8 @@ pub enum Country {
     ZA,
     ZM,
     ZW,
+    #[default]
     ZZ,
-}
-
-impl Default for Country {
-    fn default() -> Self {
-        Self::ZZ
-    }
 }
 
 impl fmt::Display for Country {

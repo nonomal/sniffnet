@@ -1,5 +1,5 @@
 <div align="center">
-<p align="center"><a href="https://github.com/GyulyVGC/sniffnet"><img alt="Sniffnet" src="https://github.com/GyulyVGC/sniffnet/blob/main/resources/repository/logo_repository.png?raw=true" width="100%"/></a></p>
+<p align="center"><a href="https://github.com/GyulyVGC/sniffnet"><img alt="Sniffnet" src="https://github.com/GyulyVGC/sniffnet/blob/main/resources/repository/header_repository.png?raw=true" width="100%"/></a></p>
   <h1>Design Guidelines & Resources</h1>
   <p>A collection of design contribution guidelines and resources for Sniffnet.</p>
 </div>
@@ -8,7 +8,7 @@
 
 ## 👋 Welcome
 
-Sniffnet is an application to empower everyone with a tool to comfortably monitor their Internet traffic.
+Sniffnet is an application to empower everyone with a tool to comfortably monitor their network traffic.
 
 The main pillar of Sniffnet is to represent in a straightforward way concepts that are usually considered advanced:
 for this reason implementing an optimal UI for the application is crucially important.
@@ -41,7 +41,7 @@ for this reason implementing an optimal UI for the application is crucially impo
 
 ## 🚀 The Main Product
 
-Sniffnet can be downloaded from [here](https://sniffnet.net/download/).
+Sniffnet can be downloaded from [here](https://sniffnet.app/download/).
 
 ### Target audience
 

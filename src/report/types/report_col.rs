@@ -1,13 +1,11 @@
 use crate::networking::types::address_port_pair::AddressPortPair;
+use crate::networking::types::data_representation::DataRepr;
 use crate::networking::types::info_address_port_pair::InfoAddressPortPair;
 use crate::report::types::search_parameters::FilterInputType;
-use crate::translations::translations::{
-    address_translation, bytes_translation, packets_translation, protocol_translation,
-};
+use crate::translations::translations::{address_translation, protocol_translation};
 use crate::translations::translations_2::{destination_translation, source_translation};
 use crate::translations::translations_3::{port_translation, service_translation};
 use crate::translations::types::language::Language;
-use crate::ByteMultiple;
 
 // total width: 1012.0
 
@@ -25,35 +23,35 @@ pub enum ReportCol {
     DstPort,
     Proto,
     Service,
-    Bytes,
-    Packets,
+    Data,
 }
 
 impl ReportCol {
-    pub(crate) const ALL: [ReportCol; 8] = [
+    pub(crate) const ALL: [ReportCol; 7] = [
         ReportCol::SrcIp,
         ReportCol::SrcPort,
         ReportCol::DstIp,
         ReportCol::DstPort,
         ReportCol::Proto,
         ReportCol::Service,
-        ReportCol::Bytes,
-        ReportCol::Packets,
+        ReportCol::Data,
     ];
 
-    pub(crate) fn get_title(&self, language: Language) -> String {
+    pub(crate) const FILTER_COLUMNS_WIDTH: f32 = 4.0 * SMALL_COL_WIDTH + 2.0 * LARGE_COL_WIDTH;
+
+    pub(crate) fn get_title(&self, language: Language, data_repr: DataRepr) -> String {
         match self {
             ReportCol::SrcIp | ReportCol::DstIp => address_translation(language).to_string(),
             ReportCol::SrcPort | ReportCol::DstPort => port_translation(language).to_string(),
             ReportCol::Proto => protocol_translation(language).to_string(),
             ReportCol::Service => service_translation(language).to_string(),
-            ReportCol::Bytes => {
-                let mut str = bytes_translation(language).to_string();
-                str.remove(0).to_uppercase().to_string() + &str
-            }
-            ReportCol::Packets => {
-                let mut str = packets_translation(language).to_string();
-                str.remove(0).to_uppercase().to_string() + &str
+            ReportCol::Data => {
+                let mut str = data_repr.get_label(language).to_string();
+                if str.is_empty() {
+                    str
+                } else {
+                    str.remove(0).to_uppercase().to_string() + &str
+                }
             }
         }
     }
@@ -70,19 +68,24 @@ impl ReportCol {
         }
     }
 
-    pub(crate) fn get_value(&self, key: &AddressPortPair, val: &InfoAddressPortPair) -> String {
+    pub(crate) fn get_value(
+        &self,
+        key: &AddressPortPair,
+        val: &InfoAddressPortPair,
+        data_repr: DataRepr,
+    ) -> String {
         match self {
-            ReportCol::SrcIp => key.address1.clone(),
+            ReportCol::SrcIp => key.src_ip.to_string(),
             ReportCol::SrcPort => {
-                if let Some(port) = key.port1 {
+                if let Some(port) = key.src_port {
                     port.to_string()
                 } else {
                     "-".to_string()
                 }
             }
-            ReportCol::DstIp => key.address2.clone(),
+            ReportCol::DstIp => key.dst_ip.to_string(),
             ReportCol::DstPort => {
-                if let Some(port) = key.port2 {
+                if let Some(port) = key.dst_port {
                     port.to_string()
                 } else {
                     "-".to_string()
@@ -90,8 +93,7 @@ impl ReportCol {
             }
             ReportCol::Proto => key.protocol.to_string(),
             ReportCol::Service => val.service.to_string(),
-            ReportCol::Bytes => ByteMultiple::formatted_string(val.transmitted_bytes),
-            ReportCol::Packets => val.transmitted_packets.to_string(),
+            ReportCol::Data => data_repr.formatted_string(val.transmitted_data(data_repr)),
         }
     }
 
@@ -103,7 +105,7 @@ impl ReportCol {
     }
 
     pub(crate) fn get_max_chars(&self, language_opt: Option<Language>) -> usize {
-        let reduction_factor = if [Language::JA, Language::KO, Language::ZH]
+        let reduction_factor = if [Language::JA, Language::KO, Language::ZH, Language::ZH_TW]
             .contains(&language_opt.unwrap_or(Language::EN))
         {
             2
@@ -124,7 +126,7 @@ impl ReportCol {
             ReportCol::DstPort => FilterInputType::PortDst,
             ReportCol::Proto => FilterInputType::Proto,
             ReportCol::Service => FilterInputType::Service,
-            ReportCol::Bytes | ReportCol::Packets => FilterInputType::Country, // just to not panic...
+            ReportCol::Data => FilterInputType::Country, // just to not panic...
         }
     }
 }

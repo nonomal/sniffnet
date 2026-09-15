@@ -1,12 +1,9 @@
-use std::sync::Arc;
-
-use iced::alignment::{Horizontal, Vertical};
 use iced::widget::text::LineHeight;
 use iced::widget::tooltip::Position;
 use iced::widget::{
-    button, vertical_space, Column, Container, PickList, Row, Rule, Slider, Space, Text, Tooltip,
+    Column, Container, PickList, Row, Slider, Space, Text, Toggler, Tooltip, button,
 };
-use iced::{Alignment, Font, Length};
+use iced::{Alignment, Length};
 
 use crate::gui::components::button::{button_open_file, row_open_link_tooltip};
 use crate::gui::components::tab::get_settings_tabs;
@@ -14,112 +11,125 @@ use crate::gui::pages::settings_notifications_page::settings_header;
 use crate::gui::pages::types::settings_page::SettingsPage;
 use crate::gui::styles::button::ButtonType;
 use crate::gui::styles::container::ContainerType;
-use crate::gui::styles::style_constants::FONT_SIZE_SUBTITLE;
+use crate::gui::styles::rule::RuleType;
+use crate::gui::styles::style_constants::{
+    FONT_SIZE_FOOTER, FONT_SIZE_SUBTITLE, ICONS, TOOLTIP_DELAY,
+};
 use crate::gui::styles::text::TextType;
 use crate::gui::types::message::Message;
-use crate::mmdb::types::mmdb_reader::MmdbReader;
+use crate::gui::types::settings::Settings;
+use crate::mmdb::types::mmdb_reader::{MmdbReader, MmdbReaders};
+use crate::networking::types::ip_blacklist::IpBlacklist;
 use crate::translations::translations::language_translation;
 use crate::translations::translations_2::country_translation;
 use crate::translations::translations_3::{
-    learn_more_translation, mmdb_files_translation, params_not_editable_translation,
-    zoom_translation,
+    mmdb_files_translation, params_not_editable_translation, zoom_translation,
 };
+use crate::translations::translations_5::ip_blacklist_translation;
+use crate::translations::translations_6::expanded_view_translation;
 use crate::utils::formatted_strings::get_path_termination_string;
 use crate::utils::types::file_info::FileInfo;
 use crate::utils::types::icon::Icon;
 use crate::utils::types::web_page::WebPage;
-use crate::{ConfigSettings, Language, RunningPage, Sniffer, StyleType};
+use crate::{Language, Sniffer, StyleType};
 
-pub fn settings_general_page(sniffer: &Sniffer) -> Container<Message, StyleType> {
-    let ConfigSettings {
-        style,
+pub fn settings_general_page(sniffer: &Sniffer) -> Container<'_, Message, StyleType> {
+    let Settings {
         language,
         color_gradient,
         ..
-    } = sniffer.configs.lock().unwrap().settings;
-    let font = style.get_extension().font;
-    let font_headers = style.get_extension().font_headers;
+    } = sniffer.conf.settings;
 
     let content = Column::new()
-        .align_items(Alignment::Center)
+        .align_x(Alignment::Center)
         .width(Length::Fill)
-        .push(settings_header(
-            font,
-            font_headers,
-            color_gradient,
-            language,
-        ))
-        .push(get_settings_tabs(SettingsPage::General, font, language))
-        .push(Space::with_height(10))
-        .push(column_all_general_setting(sniffer, font));
+        .push(settings_header(color_gradient, language))
+        .push(get_settings_tabs(SettingsPage::General, language))
+        .push(Space::new().height(10))
+        .push(column_all_general_setting(sniffer));
 
     Container::new(content)
         .height(400)
         .width(800)
-        .style(ContainerType::Modal)
+        .class(ContainerType::Modal)
 }
 
-fn column_all_general_setting(
-    sniffer: &Sniffer,
-    font: Font,
-) -> Column<'static, Message, StyleType> {
-    let ConfigSettings {
+fn column_all_general_setting(sniffer: &Sniffer) -> Column<'_, Message, StyleType> {
+    let Settings {
         language,
         scale_factor,
-        mmdb_country,
-        mmdb_asn,
+        expanded_view,
+        ref mmdb_country,
+        ref mmdb_asn,
+        ip_blacklist: ref ip_blacklist_str,
         ..
-    } = sniffer.configs.lock().unwrap().settings.clone();
+    } = sniffer.conf.settings;
+    let ip_blacklist = &sniffer.ip_blacklist;
 
-    let is_editable = sniffer.running_page.eq(&RunningPage::Init);
+    let is_editable = sniffer.running_page.is_none();
 
     let mut column = Column::new()
-        .align_items(Alignment::Center)
+        .align_x(Alignment::Center)
         .padding([5, 10])
-        .push(row_language_scale_factor(language, font, scale_factor))
-        .push(Rule::horizontal(25));
+        .push(row_language_scale_factor(
+            language,
+            scale_factor,
+            expanded_view,
+        ))
+        .push(RuleType::Standard.horizontal(25))
+        .push(Space::new().height(10));
 
     if !is_editable {
         column = column
             .push(
-                Container::new(Text::new(params_not_editable_translation(language)).font(font))
+                Container::new(Text::new(params_not_editable_translation(language)))
                     .padding(10.0)
-                    .style(ContainerType::Badge),
+                    .class(ContainerType::Badge),
             )
-            .push(Space::with_height(10));
+            .push(Space::new().height(10));
     }
 
-    column = column.push(mmdb_settings(
-        is_editable,
-        language,
-        font,
-        &mmdb_country,
-        &mmdb_asn,
-        &sniffer.country_mmdb_reader,
-        &sniffer.asn_mmdb_reader,
-    ));
+    let import_files_row = Row::new()
+        .align_y(Alignment::Start)
+        .height(100)
+        .push(mmdb_settings(
+            is_editable,
+            language,
+            mmdb_country,
+            mmdb_asn,
+            &sniffer.mmdb_readers,
+        ))
+        .push(RuleType::Standard.vertical(25))
+        .push(blacklist_selection(
+            is_editable,
+            ip_blacklist_str,
+            ip_blacklist,
+            language,
+        ));
+
+    column = column.push(import_files_row);
 
     column
 }
 
-fn row_language_scale_factor(
+fn row_language_scale_factor<'a>(
     language: Language,
-    font: Font,
-    scale_factor: f64,
-) -> Row<'static, Message, StyleType> {
+    scale_factor: f32,
+    expanded_view: bool,
+) -> Row<'a, Message, StyleType> {
     Row::new()
-        .align_items(Alignment::Start)
+        .align_y(Alignment::Start)
         .height(100)
-        .push(language_picklist(language, font))
-        .push(Rule::vertical(25))
-        .push(scale_factor_slider(language, font, scale_factor))
-        .push(Rule::vertical(25))
-        .push(need_help(language, font))
+        .push(language_picklist(language))
+        .push(RuleType::Standard.vertical(25))
+        .push(scale_factor_slider(language, scale_factor))
+        .push(RuleType::Standard.vertical(25))
+        .push(expanded_view_toggler(language, expanded_view))
 }
 
-fn language_picklist(language: Language, font: Font) -> Container<'static, Message, StyleType> {
+fn language_picklist<'a>(language: Language) -> Container<'a, Message, StyleType> {
     let mut flag_row = Row::new()
-        .align_items(Alignment::Center)
+        .align_y(Alignment::Center)
         .spacing(10)
         .push(language.get_flag());
     if !language.is_up_to_date() {
@@ -127,10 +137,9 @@ fn language_picklist(language: Language, font: Font) -> Container<'static, Messa
             Tooltip::new(
                 button(
                     Text::new("!")
-                        .style(TextType::Danger)
-                        .font(font)
-                        .vertical_alignment(Vertical::Center)
-                        .horizontal_alignment(Horizontal::Center)
+                        .class(TextType::Danger)
+                        .align_y(Alignment::Center)
+                        .align_x(Alignment::Center)
                         .size(15)
                         .line_height(LineHeight::Relative(1.0)),
                 )
@@ -138,207 +147,237 @@ fn language_picklist(language: Language, font: Font) -> Container<'static, Messa
                 .padding(2)
                 .height(20)
                 .width(20)
-                .style(ButtonType::Alert),
-                row_open_link_tooltip(
-                    "The selected language is not\nfully updated to version 1.3",
-                    font,
-                ),
+                .class(ButtonType::Alert),
+                row_open_link_tooltip("The selected language is not\nfully updated to version 1.5"),
                 Position::FollowCursor,
             )
-            .style(ContainerType::Tooltip),
+            .class(ContainerType::Tooltip)
+            .delay(TOOLTIP_DELAY),
         );
     }
 
     let content = Column::new()
-        .align_items(Alignment::Center)
+        .align_x(Alignment::Center)
         .push(
             Text::new(language_translation(language))
-                .style(TextType::Subtitle)
-                .size(FONT_SIZE_SUBTITLE)
-                .font(font),
+                .class(TextType::Subtitle)
+                .size(FONT_SIZE_SUBTITLE),
         )
-        .push(vertical_space())
+        .push(Space::new().height(Length::Fill))
         .push(flag_row)
-        .push(Space::with_height(10))
+        .push(Space::new().height(10))
         .push(
             PickList::new(
                 &Language::ALL[..],
                 Some(language),
                 Message::LanguageSelection,
             )
-            .padding([2, 7])
-            .font(font),
+            .menu_height(200)
+            .padding([2, 7]),
         )
-        .push(vertical_space());
+        .push(Space::new().height(Length::Fill));
 
     Container::new(content)
         .width(Length::Fill)
-        .align_x(Horizontal::Center)
-        .align_y(Vertical::Center)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
 }
 
-fn scale_factor_slider(
+fn scale_factor_slider<'a>(
     language: Language,
-    font: Font,
-    scale_factor: f64,
-) -> Container<'static, Message, StyleType> {
-    #[allow(clippy::cast_possible_truncation)]
-    let slider_width = 130.0 / scale_factor as f32;
+    scale_factor: f32,
+) -> Container<'a, Message, StyleType> {
+    let slider_width = 130.0 / scale_factor;
     let slider_val = scale_factor.log(3.0);
     Container::new(
         Column::new()
-            .align_items(Alignment::Center)
+            .align_x(Alignment::Center)
             .push(
                 Text::new(zoom_translation(language))
-                    .style(TextType::Subtitle)
-                    .size(FONT_SIZE_SUBTITLE)
-                    .font(font),
+                    .class(TextType::Subtitle)
+                    .size(FONT_SIZE_SUBTITLE),
             )
-            .push(vertical_space())
-            .push(Text::new(format!("{:.0}%", scale_factor * 100.0)).font(font))
-            .push(Space::with_height(5))
+            .push(Space::new().height(Length::Fill))
+            .push(Text::new(format!("{:.0}%", scale_factor * 100.0)))
+            .push(Space::new().height(5))
             .push(
-                Slider::new(-1.0..=1.0, slider_val, Message::ChangeScaleFactor)
-                    .step(0.01)
-                    .width(slider_width),
+                Slider::new(-1.0..=1.0, slider_val, |slider_val| {
+                    let scale_factor_str = format!("{:.1}", 3.0_f32.powf(slider_val));
+                    let scale_factor = scale_factor_str.parse().unwrap_or(1.0);
+                    Message::ChangeScaleFactor(scale_factor)
+                })
+                .step(0.01_f32)
+                .width(slider_width),
             )
-            .push(vertical_space()),
+            .push(Space::new().height(Length::Fill)),
     )
     .width(Length::Fill)
-    .align_x(Horizontal::Center)
-    .align_y(Vertical::Center)
+    .align_x(Alignment::Center)
+    .align_y(Alignment::Center)
 }
 
-fn need_help(language: Language, font: Font) -> Container<'static, Message, StyleType> {
+fn expanded_view_toggler<'a>(
+    language: Language,
+    expanded_view: bool,
+) -> Container<'a, Message, StyleType> {
     let content = Column::new()
-        .align_items(Alignment::Center)
+        .align_x(Alignment::Center)
         .push(
-            Text::new(learn_more_translation(language))
-                .style(TextType::Subtitle)
-                .size(FONT_SIZE_SUBTITLE)
-                .font(font),
+            Text::new(expanded_view_translation(language))
+                .class(TextType::Subtitle)
+                .size(FONT_SIZE_SUBTITLE),
         )
-        .push(vertical_space())
+        .push(Space::new().height(Length::Fill))
         .push(
-            Tooltip::new(
-                button(
-                    Icon::Book
-                        .to_text()
-                        .vertical_alignment(Vertical::Center)
-                        .horizontal_alignment(Horizontal::Center)
-                        .size(22)
-                        .line_height(LineHeight::Relative(1.0)),
-                )
-                .on_press(Message::OpenWebPage(WebPage::Wiki))
-                .padding(2)
-                .height(40)
-                .width(60),
-                row_open_link_tooltip("Sniffnet Wiki", font),
-                Position::Right,
-            )
-            .gap(5)
-            .style(ContainerType::Tooltip),
+            Toggler::new(expanded_view)
+                .label(Icon::ExpandedView.codepoint())
+                .font(ICONS)
+                .on_toggle(|_| Message::ToggleExpandedView)
+                .width(Length::Shrink)
+                .spacing(5)
+                .size(23),
         )
-        .push(vertical_space());
+        .push(Space::new().height(Length::Fill));
 
     Container::new(content)
         .width(Length::Fill)
-        .align_x(Horizontal::Center)
-        .align_y(Vertical::Center)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
 }
 
-fn mmdb_settings(
+fn mmdb_settings<'a>(
     is_editable: bool,
     language: Language,
-    font: Font,
     country_path: &str,
     asn_path: &str,
-    country_reader: &Arc<MmdbReader>,
-    asn_reader: &Arc<MmdbReader>,
-) -> Column<'static, Message, StyleType> {
+    mmdb_readers: &MmdbReaders,
+) -> Column<'a, Message, StyleType> {
     Column::new()
+        .width(Length::Fill)
         .spacing(5)
-        .align_items(Alignment::Center)
+        .align_x(Alignment::Center)
         .push(
             Text::new(mmdb_files_translation(language))
-                .font(font)
-                .style(TextType::Subtitle)
+                .class(TextType::Subtitle)
                 .size(FONT_SIZE_SUBTITLE),
         )
         .push(mmdb_selection_row(
             is_editable,
-            font,
             Message::CustomCountryDb,
             country_path,
-            country_reader,
+            &mmdb_readers.country,
             country_translation(language),
             language,
         ))
         .push(mmdb_selection_row(
             is_editable,
-            font,
             Message::CustomAsnDb,
             asn_path,
-            asn_reader,
+            &mmdb_readers.asn,
             "ASN",
             language,
         ))
 }
 
-fn mmdb_selection_row(
+fn mmdb_selection_row<'a>(
     is_editable: bool,
-    font: Font,
     message: fn(String) -> Message,
     custom_path: &str,
-    mmdb_reader: &Arc<MmdbReader>,
+    mmdb_reader: &MmdbReader,
     caption: &str,
     language: Language,
-) -> Row<'static, Message, StyleType> {
+) -> Row<'a, Message, StyleType> {
     let is_error = if custom_path.is_empty() {
         false
     } else {
-        match **mmdb_reader {
-            MmdbReader::Default(_) => true,
+        match *mmdb_reader {
+            MmdbReader::Default(_) | MmdbReader::Empty => true,
             MmdbReader::Custom(_) => false,
         }
     };
 
     Row::new()
-        .align_items(Alignment::Center)
-        .push(Text::new(format!("{caption}: ")).font(font))
+        .align_y(Alignment::Center)
+        .push(Text::new(format!("{caption}: ")))
         .push(
-            Text::new(get_path_termination_string(custom_path, 25))
-                .font(font)
-                .style(if is_error {
-                    TextType::Danger
-                } else {
-                    TextType::Standard
-                }),
+            Text::new(get_path_termination_string(custom_path, 25)).class(if is_error {
+                TextType::Danger
+            } else {
+                TextType::Standard
+            }),
         )
         .push(if custom_path.is_empty() {
             button_open_file(
                 custom_path.to_owned(),
                 FileInfo::Database,
                 language,
-                font,
                 is_editable,
                 message,
             )
         } else {
-            button_clear_mmdb(message, font, is_editable)
+            button_clear_mmdb(message, is_editable)
         })
 }
 
-fn button_clear_mmdb(
-    message: fn(String) -> Message,
-    font: Font,
+fn blacklist_selection<'a>(
     is_editable: bool,
-) -> Tooltip<'static, Message, StyleType> {
+    custom_path: &str,
+    ip_blacklist: &IpBlacklist,
+    language: Language,
+) -> Column<'a, Message, StyleType> {
+    let is_error = if custom_path.is_empty() {
+        false
+    } else {
+        ip_blacklist.is_invalid()
+    };
+
+    let message = Message::LoadIpBlacklist;
+    Column::new()
+        .width(Length::Fill)
+        .spacing(5)
+        .align_x(Alignment::Center)
+        .push(
+            Text::new(ip_blacklist_translation(language))
+                .class(TextType::Subtitle)
+                .size(FONT_SIZE_SUBTITLE),
+        )
+        .push(
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(
+                    Text::new(get_path_termination_string(custom_path, 25)).class(if is_error {
+                        TextType::Danger
+                    } else {
+                        TextType::Standard
+                    }),
+                )
+                .push(if custom_path.is_empty() {
+                    button_open_file(
+                        custom_path.to_owned(),
+                        FileInfo::Blacklist,
+                        language,
+                        is_editable,
+                        message,
+                    )
+                } else {
+                    button_clear_mmdb(message, is_editable)
+                }),
+        )
+        .push(
+            ip_blacklist
+                .imported_items_info()
+                .map(|info| Text::new(info).size(FONT_SIZE_FOOTER)),
+        )
+}
+
+fn button_clear_mmdb<'a>(
+    message: fn(String) -> Message,
+    is_editable: bool,
+) -> Tooltip<'a, Message, StyleType> {
     let mut button = button(
         Text::new("×")
-            .font(font)
-            .vertical_alignment(Vertical::Center)
-            .horizontal_alignment(Horizontal::Center)
+            .align_y(Alignment::Center)
+            .align_x(Alignment::Center)
             .size(15)
             .line_height(LineHeight::Relative(1.0)),
     )
@@ -350,5 +389,5 @@ fn button_clear_mmdb(
         button = button.on_press(message(String::new()));
     }
 
-    Tooltip::new(button, "", Position::Right)
+    Tooltip::new(button, "", Position::Right).delay(TOOLTIP_DELAY)
 }

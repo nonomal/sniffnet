@@ -1,176 +1,245 @@
 //! GUI bottom footer
 
-use std::sync::{Arc, Mutex};
-
-use iced::alignment::{Horizontal, Vertical};
-use iced::widget::text::LineHeight;
-use iced::widget::tooltip::Position;
-use iced::widget::{button, Container, Row, Text, Tooltip};
-use iced::widget::{horizontal_space, Space};
-use iced::{Alignment, Font, Length};
-
 use crate::gui::components::button::row_open_link_tooltip;
+use crate::gui::components::types::my_modal::MyModal;
 use crate::gui::styles::button::ButtonType;
 use crate::gui::styles::container::ContainerType;
-use crate::gui::styles::style_constants::{FONT_SIZE_FOOTER, FONT_SIZE_SUBTITLE};
+use crate::gui::styles::style_constants::{FONT_SIZE_BODY, FONT_SIZE_FOOTER, TOOLTIP_DELAY};
 use crate::gui::styles::text::TextType;
 use crate::gui::styles::types::gradient_type::GradientType;
 use crate::gui::styles::types::style_type::StyleType;
 use crate::gui::types::message::Message;
-use crate::translations::translations_2::new_version_available_translation;
+use crate::gui::types::update_status::UpdateStatus;
+use crate::translations::translations_6::update_status_translation;
 use crate::utils::formatted_strings::APP_VERSION;
 use crate::utils::types::icon::Icon;
 use crate::utils::types::web_page::WebPage;
 use crate::{Language, SNIFFNET_TITLECASE};
+use iced::widget::text::LineHeight;
+use iced::widget::tooltip::Position;
+use iced::widget::{Column, Container, Row, Text, Tooltip, button, rich_text, span};
+use iced::{Alignment, Length, Padding};
 
-pub fn footer(
+pub fn footer<'a>(
     thumbnail: bool,
     language: Language,
     color_gradient: GradientType,
-    font: Font,
-    font_footer: Font,
-    newer_release_available: &Arc<Mutex<Option<bool>>>,
-) -> Container<'static, Message, StyleType> {
-    if thumbnail {
-        return thumbnail_footer();
+    update_status: &UpdateStatus,
+    dots_pulse: &(String, u8),
+    expanded_view: bool,
+) -> Option<Container<'a, Message, StyleType>> {
+    if thumbnail || expanded_view {
+        return None;
     }
 
     let release_details_row =
-        get_release_details(language, font, font_footer, newer_release_available);
+        get_release_details(language, update_status, dots_pulse, expanded_view);
+
+    let heart_size = match dots_pulse.1 {
+        1 => 17.0,
+        2 => 20.0,
+        _ => 14.0,
+    };
 
     let footer_row = Row::new()
         .spacing(10)
         .padding([0, 20])
-        .align_items(Alignment::Center)
+        .align_y(Alignment::Center)
         .push(release_details_row)
-        .push(get_button_website(font))
-        .push(get_button_github(font))
-        .push(get_button_sponsor(font))
+        .push(get_button_roadmap())
+        .push(get_button_wiki())
+        .push(get_button_github())
+        .push(get_button_news())
+        .push(get_button_sponsor())
         .push(
-            Text::new("Made with ❤ by Giuliano Bellini")
+            Column::new()
                 .width(Length::Fill)
-                .horizontal_alignment(Horizontal::Right)
-                .size(FONT_SIZE_FOOTER)
-                .font(font_footer),
+                .align_x(Alignment::End)
+                .push(
+                    Row::new()
+                        .height(Length::Fill)
+                        .align_y(Alignment::Center)
+                        .push(Text::new("Made with").size(FONT_SIZE_FOOTER))
+                        .push(
+                            Text::new("❤")
+                                .size(heart_size)
+                                .width(25)
+                                .align_x(Alignment::Center)
+                                .align_y(Alignment::Center),
+                        )
+                        .push(Text::new("by ").size(FONT_SIZE_FOOTER))
+                        .push(
+                            Tooltip::new(
+                                rich_text![span("Giuliano Bellini").underline(true).link(())]
+                                    .on_link_click(|()| Message::OpenWebPage(WebPage::MyGitHub))
+                                    .size(FONT_SIZE_FOOTER),
+                                row_open_link_tooltip(""),
+                                Position::FollowCursor,
+                            )
+                            .class(ContainerType::Tooltip)
+                            .delay(TOOLTIP_DELAY),
+                        ),
+                ),
         );
 
-    Container::new(footer_row)
-        .height(45)
-        .align_y(Vertical::Center)
-        .style(ContainerType::Gradient(color_gradient))
+    Some(
+        Container::new(footer_row)
+            .height(45)
+            .align_y(Alignment::Center)
+            .class(ContainerType::Gradient(color_gradient)),
+    )
 }
 
-fn get_button_website(font: Font) -> Tooltip<'static, Message, StyleType> {
+fn get_button_roadmap<'a>() -> Tooltip<'a, Message, StyleType> {
     let content = button(
-        Icon::Globe
+        Icon::Roadmap
             .to_text()
-            .size(17)
-            .horizontal_alignment(Horizontal::Center)
-            .vertical_alignment(Vertical::Center)
+            .size(15)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
             .line_height(LineHeight::Relative(1.0)),
     )
+    .padding(Padding::ZERO.top(2))
     .height(30)
     .width(30)
-    .on_press(Message::OpenWebPage(WebPage::Website));
+    .on_press(Message::OpenWebPage(WebPage::Roadmap));
 
-    Tooltip::new(
-        content,
-        row_open_link_tooltip("Website", font),
-        Position::Top,
-    )
-    .style(ContainerType::Tooltip)
+    Tooltip::new(content, row_open_link_tooltip("Roadmap"), Position::Top)
+        .gap(10)
+        .class(ContainerType::Tooltip)
+        .delay(TOOLTIP_DELAY)
 }
 
-fn get_button_github(font: Font) -> Tooltip<'static, Message, StyleType> {
+fn get_button_wiki<'a>() -> Tooltip<'a, Message, StyleType> {
+    let content = button(
+        Icon::Book
+            .to_text()
+            .size(19)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .line_height(LineHeight::Relative(1.0)),
+    )
+    .padding(Padding::ZERO.top(1))
+    .height(35)
+    .width(35)
+    .on_press(Message::OpenWebPage(WebPage::Wiki));
+
+    Tooltip::new(content, row_open_link_tooltip("Wiki"), Position::Top)
+        .gap(7.5)
+        .class(ContainerType::Tooltip)
+        .delay(TOOLTIP_DELAY)
+}
+
+fn get_button_github<'a>() -> Tooltip<'a, Message, StyleType> {
     let content = button(
         Icon::GitHub
             .to_text()
             .size(26)
-            .horizontal_alignment(Horizontal::Center)
-            .vertical_alignment(Vertical::Center)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
             .line_height(LineHeight::Relative(1.0)),
     )
     .height(40)
     .width(40)
     .on_press(Message::OpenWebPage(WebPage::Repo));
 
-    Tooltip::new(
-        content,
-        row_open_link_tooltip("GitHub", font),
-        Position::Top,
-    )
-    .style(ContainerType::Tooltip)
+    Tooltip::new(content, row_open_link_tooltip("GitHub"), Position::Top)
+        .gap(5)
+        .class(ContainerType::Tooltip)
+        .delay(TOOLTIP_DELAY)
 }
 
-fn get_button_sponsor(font: Font) -> Tooltip<'static, Message, StyleType> {
+fn get_button_news<'a>() -> Tooltip<'a, Message, StyleType> {
     let content = button(
-        Text::new('❤'.to_string())
-            .font(font)
-            .size(23)
-            .style(TextType::Sponsor)
-            .horizontal_alignment(Horizontal::Center)
-            .vertical_alignment(Vertical::Center)
+        Icon::News
+            .to_text()
+            .size(16)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
             .line_height(LineHeight::Relative(1.0)),
     )
-    .padding([2, 0, 0, 0])
+    .height(35)
+    .width(35)
+    .on_press(Message::OpenWebPage(WebPage::WebsiteNews));
+
+    Tooltip::new(content, row_open_link_tooltip("News"), Position::Top)
+        .gap(7.5)
+        .class(ContainerType::Tooltip)
+        .delay(TOOLTIP_DELAY)
+}
+
+fn get_button_sponsor<'a>() -> Tooltip<'a, Message, StyleType> {
+    let content = button(
+        Text::new('❤'.to_string())
+            .size(23)
+            .class(TextType::Sponsor)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .line_height(LineHeight::Relative(1.0)),
+    )
+    .padding(Padding::ZERO.top(2))
     .height(30)
     .width(30)
-    .on_press(Message::OpenWebPage(WebPage::Sponsor));
+    .on_press(Message::OpenWebPage(WebPage::WebsiteSponsor));
 
-    Tooltip::new(
-        content,
-        row_open_link_tooltip("Sponsor", font),
-        Position::Top,
-    )
-    .style(ContainerType::Tooltip)
+    Tooltip::new(content, row_open_link_tooltip("Sponsor"), Position::Top)
+        .gap(10)
+        .class(ContainerType::Tooltip)
+        .delay(TOOLTIP_DELAY)
 }
 
-fn get_release_details(
+pub(super) fn get_release_details<'a>(
     language: Language,
-    font: Font,
-    font_footer: Font,
-    newer_release_available: &Arc<Mutex<Option<bool>>>,
-) -> Row<'static, Message, StyleType> {
+    update_status: &UpdateStatus,
+    dots_pulse: &(String, u8),
+    expanded_view: bool,
+) -> Row<'a, Message, StyleType> {
     let mut ret_val = Row::new()
-        .align_items(Alignment::Center)
+        .spacing(5)
+        .align_y(Alignment::Center)
         .height(Length::Fill)
-        .width(Length::Fill)
-        .push(
-            Text::new(format!("{SNIFFNET_TITLECASE} {APP_VERSION}"))
-                .size(FONT_SIZE_FOOTER)
-                .font(font_footer),
-        );
-    if let Some(boolean_response) = *newer_release_available.lock().unwrap() {
-        if boolean_response {
-            // a newer release is available on GitHub
-            let button = button(
-                Text::new('!'.to_string())
-                    .style(TextType::Danger)
-                    .size(28)
-                    .horizontal_alignment(Horizontal::Center)
-                    .vertical_alignment(Vertical::Center)
-                    .line_height(LineHeight::Relative(0.8)),
-            )
-            .padding(0)
-            .height(35)
-            .width(35)
-            .style(ButtonType::Alert)
-            .on_press(Message::OpenWebPage(WebPage::WebsiteDownload));
-            let tooltip = Tooltip::new(
-                button,
-                row_open_link_tooltip(new_version_available_translation(language), font),
-                Position::Top,
-            )
-            .style(ContainerType::Tooltip);
-            ret_val = ret_val.push(Space::with_width(10)).push(tooltip);
+        .width(if expanded_view {
+            Length::Shrink
         } else {
-            // this is the latest release
-            ret_val = ret_val.push(Text::new(" ✔").size(FONT_SIZE_SUBTITLE).font(font_footer));
-        }
-    }
-    ret_val
-}
+            Length::Fill
+        })
+        .push(
+            Text::new(format!("{SNIFFNET_TITLECASE} {APP_VERSION}")).size(if expanded_view {
+                FONT_SIZE_BODY
+            } else {
+                FONT_SIZE_FOOTER
+            }),
+        );
 
-fn thumbnail_footer() -> Container<'static, Message, StyleType> {
-    Container::new(horizontal_space()).height(0)
+    let mut button = button(
+        update_status
+            .icon(dots_pulse.0.len())
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .line_height(LineHeight::Relative(1.0)),
+    )
+    .padding(0)
+    .height(35)
+    .width(35)
+    .on_press(Message::ShowModal(MyModal::UpdateStatus(true)));
+
+    if matches!(update_status, UpdateStatus::UpdateAvailable(_)) {
+        button = button.class(ButtonType::Alert);
+    }
+
+    let tooltip = Tooltip::new(
+        button,
+        Text::new(update_status_translation(language)).size(FONT_SIZE_FOOTER),
+        if expanded_view {
+            Position::FollowCursor
+        } else {
+            Position::Right
+        },
+    )
+    .gap(5)
+    .class(ContainerType::Tooltip)
+    .delay(TOOLTIP_DELAY);
+    ret_val = ret_val.push(tooltip);
+
+    ret_val
 }

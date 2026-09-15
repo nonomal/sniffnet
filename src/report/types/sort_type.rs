@@ -1,10 +1,10 @@
-use iced::widget::Text;
-
 use crate::gui::styles::button::ButtonType;
 use crate::gui::styles::types::style_type::StyleType;
 use crate::utils::types::icon::Icon;
+use iced::widget::Text;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum SortType {
     Ascending,
     Descending,
@@ -21,7 +21,7 @@ impl SortType {
         }
     }
 
-    pub fn icon(self) -> Text<'static, StyleType> {
+    pub fn icon<'a>(self) -> Text<'a, StyleType> {
         let mut size = 14;
         match self {
             SortType::Ascending => Icon::SortAscending,

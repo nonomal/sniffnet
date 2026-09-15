@@ -1,5 +1,8 @@
 name: Package
 
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:
 
@@ -35,10 +38,17 @@ jobs:
           - os: windows
             arch: amd64
             target: x86_64-pc-windows-msvc
+          - os: windows
+            arch: arm64
+            target: aarch64-pc-windows-msvc
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu'
+        run: sudo apt-get update -y && sudo apt-get install -y libpcap-dev libasound2-dev
 
       - name: Install Windows dependencies
         if: matrix.os == 'windows'
@@ -48,12 +58,13 @@ jobs:
         run: |
           Write-Host "::group::Npcap SDK"
           $ARCH = "${{ matrix.arch }}"
-          Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.13.zip" -OutFile "$env:TEMP\npcap-sdk.zip" -Verbose
+          Invoke-WebRequest -Uri "https://npcap.com/dist/npcap-sdk-1.16.zip" -OutFile "$env:TEMP\npcap-sdk.zip" -Verbose
           Expand-Archive -LiteralPath "$env:TEMP\npcap-sdk.zip" -DestinationPath "$env:TEMP\npcap-sdk" -Verbose
           $LibPath = switch ($ARCH)
           {
             "i386"  { "Lib"       }
             "amd64" { "Lib\x64"   }
+            "arm64" { "Lib\ARM64" }
             default { throw "$ARCH is not supported!" }
           }
           Add-Content -Path "$env:GITHUB_ENV" -Value "LIB=$env:TEMP\npcap-sdk\$LibPath"
@@ -68,20 +79,49 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Check crate
+        if: matrix.os == 'macos' || matrix.os == 'windows' || matrix.os == 'ubuntu' && matrix.arch == 'amd64'
+        run: cargo publish --workspace --dry-run --target ${{ matrix.target }}
+
+      - name: Clippy (release mode)
+        run: cargo clippy --release -- -D warnings
+
+      # needed to make latency tests succeed
+      - name: Enable unprivileged ICMP (Linux)
+        if: matrix.os == 'ubuntu'
+        run: sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+
+      - name: Test (release mode)
+        if: matrix.os == 'macos' || matrix.os == 'ubuntu' || matrix.os == 'windows' && matrix.arch == 'amd64'
+        run: |
+          cargo test --release --verbose -- --nocapture &&
+          cargo clean
+
       - name: Install Cross
         if: matrix.os == 'ubuntu'
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Build binary
+      - name: Build binary (Linux)
         if: matrix.os == 'ubuntu'
-        run: cross build --release --target ${{ matrix.target }}
+        # alsa-sys and fontconfig-sys use pkg-config to locate their C libs, but the 0.2.5
+        # cross image doesn't pre-configure pkg-config for cross-compilation: point it at the
+        # target arch's .pc files (installed by the Cross.toml pre-build) and allow cross lookups
+        env:
+          PKG_CONFIG_ALLOW_CROSS: "1"
+        run: |
+          case "${{ matrix.arch }}" in
+            i386)  export PKG_CONFIG_PATH=/usr/lib/i386-linux-gnu/pkgconfig ;;
+            armhf) export PKG_CONFIG_PATH=/usr/lib/arm-linux-gnueabihf/pkgconfig ;;
+            arm64) export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig ;;
+          esac
+          cross build --release --target ${{ matrix.target }}
 
-      - name: Build binary
+      - name: Build binary (macOS/Windows)
         if: matrix.os == 'macos' || matrix.os == 'windows'
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-${{ matrix.os }}-${{ matrix.target }}
           path: |
@@ -109,7 +149,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install dependencies
         run: apt-get update -y && apt-get install -y curl build-essential
@@ -122,7 +162,7 @@ jobs:
       - name: Install packaging tools
         run: cargo install cargo-deb
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: build-ubuntu-${{ matrix.target }}
           path: target/
@@ -135,10 +175,69 @@ jobs:
           mv target/${{ matrix.target }}/debian/*.deb artifacts/Sniffnet_LinuxDEB_${{ matrix.arch }}.deb
 
       - name: Upload package artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: deb-${{ matrix.arch }}
           path: artifacts/
+          if-no-files-found: error
+
+  appimage:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:latest
+      options: --privileged
+    needs: deb
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            appimgarch: x86_64
+          - arch: arm64
+            appimgarch: aarch64
+          - arch: i386
+            appimgarch: i686
+          - arch: armhf
+            appimgarch: armhf
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: apt-get update -y && apt-get install -y git build-essential graphicsmagick-imagemagick-compat wget file desktop-file-utils libfuse2
+
+      - name: Download Debian package
+        uses: actions/download-artifact@v8
+        with:
+          name: deb-${{ matrix.arch }}
+          path: /target/
+
+      - name: Download pkg2appimage
+        shell: bash
+        run: git clone https://github.com/AppImageCommunity/pkg2appimage.git
+
+      - name: Replace placeholders
+        shell: bash
+        run: |
+          VERSION=$(grep -m1 "^version" Cargo.toml | cut -d'"' -f2)
+          mv /target/Sniffnet_LinuxDEB_${{ matrix.arch }}.deb /target/sniffnet_${VERSION}_${{ matrix.arch }}.deb
+          sed -i -e "s/REPLACE_TAG/sniffnet_${VERSION}_${{ matrix.arch }}.deb/g" resources/packaging/linux/AppImage/sniffnet.yml
+          sed -i -e 's/binary-${arch}/binary-${{ matrix.arch }}/g' pkg2appimage/functions.sh
+
+      - name: Repackage for AppImage
+        shell: bash
+        run: |
+          cd pkg2appimage
+          NO_GLIBC_VERSION=1 ARCH=${{ matrix.appimgarch }} FUNCTIONS_SH=$(pwd)/functions.sh ./pkg2appimage ../resources/packaging/linux/AppImage/sniffnet.yml
+          mkdir /out
+          mv out/*.AppImage /out/Sniffnet_LinuxAppImage_${{ matrix.arch }}.AppImage
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: appimage-${{ matrix.arch }}
+          path: /out/
           if-no-files-found: error
 
   rpm:
@@ -157,7 +256,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install dependencies
         run: dnf update -y && dnf install -y @development-tools patchelf
@@ -170,7 +269,7 @@ jobs:
       - name: Install packaging tools
         run: cargo install cargo-generate-rpm
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: build-ubuntu-${{ matrix.target }}
           path: target/
@@ -184,7 +283,7 @@ jobs:
           mv target/${{ matrix.target }}/generate-rpm/*.rpm artifacts/Sniffnet_LinuxRPM_${{ matrix.arch }}.rpm
 
       - name: Upload package artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: rpm-${{ matrix.arch }}
           path: artifacts/
@@ -204,7 +303,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -214,7 +313,7 @@ jobs:
           cargo install toml-cli
           brew install create-dmg
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: build-macos-${{ matrix.target }}
           path: target/
@@ -248,7 +347,7 @@ jobs:
             "target/release/bundle/osx/"
 
       - name: Upload package artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dmg-${{ matrix.arch }}
           path: artifacts/
@@ -261,14 +360,16 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - arch: 32-bit
+          - arch: x86
             target: i686-pc-windows-msvc
-          - arch: 64-bit
+          - arch: x64
             target: x86_64-pc-windows-msvc
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install dependencies
         shell: powershell
@@ -289,7 +390,7 @@ jobs:
       - name: Install packaging tools
         run: cargo install cargo-wix
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: build-windows-${{ matrix.target }}
           path: target/
@@ -301,9 +402,29 @@ jobs:
           cargo wix --no-build --nocapture --target ${{ matrix.target }}
           Move-Item -Path target\wix\sniffnet*.msi -Destination .\artifacts\Sniffnet_Windows_${{ matrix.arch }}.msi
 
-      - name: Upload package artifacts
-        uses: actions/upload-artifact@v4
+      - name: Upload unsigned package artifacts
+        id: upload-unsigned-artifact
+        uses: actions/upload-artifact@v7
         with:
           name: msi-${{ matrix.arch }}
           path: artifacts/
           if-no-files-found: error
+
+      - name: Sign package artifacts
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2.3
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '3b533e02-73c3-4908-a018-d09a34498a6a'
+          project-slug: 'sniffnet'
+          signing-policy-slug: 'release-signing'
+          github-artifact-id: '${{ steps.upload-unsigned-artifact.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: './artifacts'
+
+      - name: Upload signed package artifacts (overwrite unsigned)
+        uses: actions/upload-artifact@v7
+        with:
+          name: msi-${{ matrix.arch }}
+          path: artifacts/
+          if-no-files-found: error
+          overwrite: true

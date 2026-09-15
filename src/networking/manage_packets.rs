@@ -1,186 +1,55 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 
-use chrono::Local;
-use dns_lookup::lookup_addr;
-use etherparse::{LaxPacketHeaders, LinkHeader, NetHeaders, TransportHeader};
-use pcap::{Address, Device};
+use pcap::Address;
 
-use crate::mmdb::asn::get_asn;
-use crate::mmdb::country::get_country;
-use crate::mmdb::types::mmdb_reader::MmdbReader;
+use crate::Protocol;
+use crate::networking::capture::AddressesResolutionState;
 use crate::networking::types::address_port_pair::AddressPortPair;
+use crate::networking::types::bogon::is_bogon;
+use crate::networking::types::data_info::DataInfo;
 use crate::networking::types::data_info_host::DataInfoHost;
-use crate::networking::types::host::Host;
-use crate::networking::types::icmp_type::{IcmpType, IcmpTypeV4, IcmpTypeV6};
 use crate::networking::types::info_address_port_pair::InfoAddressPortPair;
-use crate::networking::types::my_device::MyDevice;
-use crate::networking::types::packet_filters_fields::PacketFiltersFields;
+use crate::networking::types::info_traffic::InfoTraffic;
+use crate::networking::types::ip_blacklist::IpBlacklist;
+use crate::networking::types::message_type::MessageType;
+use crate::networking::types::program::Program;
 use crate::networking::types::service::Service;
 use crate::networking::types::service_query::ServiceQuery;
 use crate::networking::types::traffic_direction::TrafficDirection;
 use crate::networking::types::traffic_type::TrafficType;
-use crate::utils::formatted_strings::get_domain_from_r_dns;
-use crate::IpVersion::{IPv4, IPv6};
-use crate::{InfoTraffic, IpVersion, Protocol};
+use crate::utils::types::timestamp::Timestamp;
+use std::time::Instant;
 
 include!(concat!(env!("OUT_DIR"), "/services.rs"));
 
-/// Calls methods to analyze link, network, and transport headers.
-/// Returns the relevant collected information.
-pub fn analyze_headers(
-    headers: LaxPacketHeaders,
-    mac_addresses: &mut (Option<String>, Option<String>),
-    exchanged_bytes: &mut u128,
-    icmp_type: &mut IcmpType,
-    packet_filters_fields: &mut PacketFiltersFields,
-) -> Option<AddressPortPair> {
-    analyze_link_header(
-        headers.link,
-        &mut mac_addresses.0,
-        &mut mac_addresses.1,
-        exchanged_bytes,
-    );
-
-    if !analyze_network_header(
-        headers.net,
-        exchanged_bytes,
-        &mut packet_filters_fields.ip_version,
-        &mut packet_filters_fields.source,
-        &mut packet_filters_fields.dest,
-    ) {
-        return None;
-    }
-
-    if !analyze_transport_header(
-        headers.transport,
-        &mut packet_filters_fields.sport,
-        &mut packet_filters_fields.dport,
-        &mut packet_filters_fields.protocol,
-        icmp_type,
-    ) {
-        return None;
-    }
-
-    Some(AddressPortPair::new(
-        packet_filters_fields.source.to_string(),
-        packet_filters_fields.sport,
-        packet_filters_fields.dest.to_string(),
-        packet_filters_fields.dport,
-        packet_filters_fields.protocol,
-    ))
-}
-
-/// This function analyzes the data link layer header passed as parameter and updates variables
-/// passed by reference on the basis of the packet header content.
-/// Returns false if packet has to be skipped.
-fn analyze_link_header(
-    link_header: Option<LinkHeader>,
-    mac_address1: &mut Option<String>,
-    mac_address2: &mut Option<String>,
-    exchanged_bytes: &mut u128,
-) {
-    if let Some(LinkHeader::Ethernet2(header)) = link_header {
-        *exchanged_bytes += 14;
-        *mac_address1 = Some(mac_from_dec_to_hex(header.source));
-        *mac_address2 = Some(mac_from_dec_to_hex(header.destination));
-    } else {
-        *mac_address1 = None;
-        *mac_address2 = None;
-    }
-}
-
-/// This function analyzes the network layer header passed as parameter and updates variables
-/// passed by reference on the basis of the packet header content.
-/// Returns false if packet has to be skipped.
-fn analyze_network_header(
-    network_header: Option<NetHeaders>,
-    exchanged_bytes: &mut u128,
-    network_protocol: &mut IpVersion,
-    address1: &mut IpAddr,
-    address2: &mut IpAddr,
-) -> bool {
-    match network_header {
-        Some(NetHeaders::Ipv4(ipv4header, _)) => {
-            *network_protocol = IpVersion::IPv4;
-            *address1 = IpAddr::from(ipv4header.source);
-            *address2 = IpAddr::from(ipv4header.destination);
-            *exchanged_bytes += u128::from(ipv4header.total_len);
-            true
-        }
-        Some(NetHeaders::Ipv6(ipv6header, _)) => {
-            *network_protocol = IpVersion::IPv6;
-            *address1 = IpAddr::from(ipv6header.source);
-            *address2 = IpAddr::from(ipv6header.destination);
-            *exchanged_bytes += u128::from(40 + ipv6header.payload_length);
-            true
-        }
-        _ => false,
-    }
-}
-
-/// This function analyzes the transport layer header passed as parameter and updates variables
-/// passed by reference on the basis of the packet header content.
-/// Returns false if packet has to be skipped.
-fn analyze_transport_header(
-    transport_header: Option<TransportHeader>,
-    port1: &mut Option<u16>,
-    port2: &mut Option<u16>,
-    protocol: &mut Protocol,
-    icmp_type: &mut IcmpType,
-) -> bool {
-    match transport_header {
-        Some(TransportHeader::Udp(udp_header)) => {
-            *port1 = Some(udp_header.source_port);
-            *port2 = Some(udp_header.destination_port);
-            *protocol = Protocol::UDP;
-            true
-        }
-        Some(TransportHeader::Tcp(tcp_header)) => {
-            *port1 = Some(tcp_header.source_port);
-            *port2 = Some(tcp_header.destination_port);
-            *protocol = Protocol::TCP;
-            true
-        }
-        Some(TransportHeader::Icmpv4(icmpv4_header)) => {
-            *port1 = None;
-            *port2 = None;
-            *protocol = Protocol::ICMP;
-            *icmp_type = IcmpTypeV4::from_etherparse(&icmpv4_header.icmp_type);
-            true
-        }
-        Some(TransportHeader::Icmpv6(icmpv6_header)) => {
-            *port1 = None;
-            *port2 = None;
-            *protocol = Protocol::ICMP;
-            *icmp_type = IcmpTypeV6::from_etherparse(&icmpv6_header.icmp_type);
-            true
-        }
-        _ => false,
-    }
-}
-
-pub fn get_service(key: &AddressPortPair, traffic_direction: TrafficDirection) -> Service {
-    if key.port1.is_none() || key.port2.is_none() || key.protocol == Protocol::ICMP {
+pub fn get_service(
+    key: &AddressPortPair,
+    traffic_direction: TrafficDirection,
+    my_interface_addresses: &[Address],
+) -> Service {
+    if key.protocol.is_portless() {
         return Service::NotApplicable;
     }
+
+    let Some(port1) = key.src_port else {
+        return Service::NotApplicable;
+    };
+    let Some(port2) = key.dst_port else {
+        return Service::NotApplicable;
+    };
 
     // to return the service associated with the highest score:
     // score = service_is_some * (port_is_well_known + bonus_direction)
     // service_is_some: 1 if some, 0 if unknown
     // port_is_well_known: 3 if well known, 1 if not
-    // bonus_direction: +1 assigned to remote port
+    // bonus_direction: +1 assigned to remote port, or to destination port in case of multicast
     let compute_service_score = |service: &Service, port: u16, bonus_direction: bool| {
         let service_is_some = u8::from(matches!(service, Service::Name(_)));
         let port_is_well_known = if port < 1024 { 3 } else { 1 };
         let bonus_direction = u8::from(bonus_direction);
         service_is_some * (port_is_well_known + bonus_direction)
     };
-
-    let port1 = key.port1.unwrap();
-    let port2 = key.port2.unwrap();
 
     let unknown = Service::Unknown;
     let service1 = SERVICES
@@ -190,16 +59,13 @@ pub fn get_service(key: &AddressPortPair, traffic_direction: TrafficDirection) -
         .get(&ServiceQuery(port2, key.protocol))
         .unwrap_or(&unknown);
 
-    let score1 = compute_service_score(
-        service1,
-        port1,
-        traffic_direction.ne(&TrafficDirection::Outgoing),
-    );
-    let score2 = compute_service_score(
-        service2,
-        port2,
-        traffic_direction.eq(&TrafficDirection::Outgoing),
-    );
+    let dest_ip = key.dst_ip;
+    let bonus_dest = traffic_direction.eq(&TrafficDirection::Outgoing)
+        || dest_ip.is_multicast()
+        || is_broadcast_address(&dest_ip, my_interface_addresses);
+
+    let score1 = compute_service_score(service1, port1, !bonus_dest);
+    let score2 = compute_service_score(service2, port2, bonus_dest);
 
     if score1 > score2 {
         *service1
@@ -208,196 +74,264 @@ pub fn get_service(key: &AddressPortPair, traffic_direction: TrafficDirection) -
     }
 }
 
-/// Function to insert the source and destination of a packet into the shared map containing the analyzed traffic.
+/// Function to insert the source and destination of a packet into the map containing the analyzed traffic
+#[allow(clippy::too_many_arguments)]
 pub fn modify_or_insert_in_map(
-    info_traffic_mutex: &Arc<Mutex<InfoTraffic>>,
+    info_traffic_msg: &mut InfoTraffic,
     key: &AddressPortPair,
-    my_device: &MyDevice,
-    mac_addresses: (Option<String>, Option<String>),
-    icmp_type: IcmpType,
-    exchanged_bytes: u128,
-) -> InfoAddressPortPair {
-    let now = Local::now();
+    my_interface_addresses: &[Address],
+    mac_addresses: (Option<[u8; 6]>, Option<[u8; 6]>),
+    message_type: Option<MessageType>,
+    vlan_id: Option<u16>,
+    packets: u128,
+    bytes: u128,
+    ip_blacklist: &IpBlacklist,
+    direction_hint: Option<TrafficDirection>,
+    timestamps_hint: Option<(Timestamp, Timestamp)>,
+) -> (TrafficDirection, Service) {
     let mut traffic_direction = TrafficDirection::default();
     let mut service = Service::Unknown;
+    let mut is_blacklisted = false;
 
-    if !info_traffic_mutex.lock().unwrap().map.contains_key(key) {
-        // first occurrence of key
+    if !info_traffic_msg.map.contains_key(key) {
+        // first occurrence of key (in this time interval)
 
-        // update device addresses
-        let mut my_interface_addresses = Vec::new();
-        for dev in Device::list().expect("Error retrieving device list\r\n") {
-            if dev.name.eq(&my_device.name) {
-                let mut my_interface_addresses_mutex = my_device.addresses.lock().unwrap();
-                my_interface_addresses_mutex.clone_from(&dev.addresses);
-                drop(my_interface_addresses_mutex);
-                my_interface_addresses = dev.addresses;
-                break;
-            }
-        }
-        // determine traffic direction
-        let source_ip = &key.address1;
-        let destination_ip = &key.address2;
-        traffic_direction = get_traffic_direction(
-            source_ip,
-            destination_ip,
-            key.port1,
-            key.port2,
-            &my_interface_addresses,
-        );
+        // determine traffic direction (IPFIX hint wins when present)
+        let source_ip = &key.src_ip;
+        let destination_ip = &key.dst_ip;
+        traffic_direction = direction_hint.unwrap_or_else(|| {
+            get_traffic_direction(
+                source_ip,
+                destination_ip,
+                key.src_port,
+                key.dst_port,
+                my_interface_addresses,
+            )
+        });
         // determine upper layer service
-        service = get_service(key, traffic_direction);
-    };
+        service = get_service(key, traffic_direction, my_interface_addresses);
+        // check if the remote address is blacklisted
+        let address_to_lookup = get_address_to_lookup(key, traffic_direction);
+        is_blacklisted = ip_blacklist.contains(&address_to_lookup);
+    }
 
-    let mut info_traffic = info_traffic_mutex
-        .lock()
-        .expect("Error acquiring mutex\n\r");
-
-    let new_info: InfoAddressPortPair = info_traffic
+    let receipt_ts = info_traffic_msg.last_packet_timestamp;
+    let (initial_ts, final_ts) = timestamps_hint.unwrap_or((receipt_ts, receipt_ts));
+    let new_info = info_traffic_msg
         .map
-        .entry(key.clone())
+        .entry(*key)
         .and_modify(|info| {
-            info.transmitted_bytes += exchanged_bytes;
-            info.transmitted_packets += 1;
-            info.final_timestamp = now;
-            if key.protocol.eq(&Protocol::ICMP) {
-                info.icmp_types
-                    .entry(icmp_type)
+            let InfoAddressPortPair {
+                src_mac,
+                dst_mac,
+                bytes: tot_bytes,
+                packets: tot_packets,
+                initial_timestamp,
+                final_timestamp,
+                final_instant,
+                message_types,
+                vlan_id: latest_vlan_id,
+                // only determined at the first occurrence of the key
+                service: _,
+                traffic_direction: _,
+                is_blacklisted: _,
+                // determined later
+                program: _,
+            } = info;
+
+            *tot_bytes += bytes;
+            *tot_packets += packets;
+            *src_mac = mac_addresses.0;
+            *dst_mac = mac_addresses.1;
+            *latest_vlan_id = vlan_id;
+            if initial_ts < *initial_timestamp {
+                *initial_timestamp = initial_ts;
+            }
+            if final_ts > *final_timestamp {
+                *final_timestamp = final_ts;
+            }
+            *final_instant = Instant::now();
+            if let Some(message_type) = message_type {
+                message_types
+                    .entry(message_type)
                     .and_modify(|n| *n += 1)
                     .or_insert(1);
             }
         })
         .or_insert_with(|| InfoAddressPortPair {
-            mac_address1: mac_addresses.0,
-            mac_address2: mac_addresses.1,
-            transmitted_bytes: exchanged_bytes,
-            transmitted_packets: 1,
-            initial_timestamp: now,
-            final_timestamp: now,
+            src_mac: mac_addresses.0,
+            dst_mac: mac_addresses.1,
+            bytes,
+            packets,
+            initial_timestamp: initial_ts,
+            final_timestamp: final_ts,
+            final_instant: Instant::now(),
             service,
             traffic_direction,
-            icmp_types: if key.protocol.eq(&Protocol::ICMP) {
-                HashMap::from([(icmp_type, 1)])
+            message_types: if let Some(message_type) = message_type {
+                HashMap::from([(message_type, 1)])
             } else {
                 HashMap::new()
             },
-        })
-        .clone();
+            vlan_id,
+            is_blacklisted,
+            program: Program::NotApplicable,
+        });
 
-    if let Some(host_info) = info_traffic
-        .addresses_resolved
-        .get(&get_address_to_lookup(key, new_info.traffic_direction))
-        .cloned()
-    {
-        if info_traffic.favorite_hosts.contains(&host_info.1) {
-            info_traffic.favorites_last_interval.insert(host_info.1);
-        }
-    }
-
-    new_info
+    (new_info.traffic_direction, new_info.service)
 }
 
-pub fn reverse_dns_lookup(
-    info_traffic: &Arc<Mutex<InfoTraffic>>,
+/// Updates stats for a known connection (already present in map):
+/// totals, rDNS resolution state, per-host map, per-service map.
+///
+/// Shared by both capture backends:
+/// - the pcap pipeline calls it once per packet (`packets` = 1)
+/// - the IPFIX collector once per flow record (`packets` = the record's packet count).
+#[allow(clippy::too_many_arguments)]
+pub fn update_connection_stats(
+    info_traffic_msg: &mut InfoTraffic,
+    resolutions_state: &mut AddressesResolutionState,
     key: &AddressPortPair,
-    traffic_direction: TrafficDirection,
-    my_device: &MyDevice,
-    country_db_reader: &Arc<MmdbReader>,
-    asn_db_reader: &Arc<MmdbReader>,
+    my_interface_addresses: &[Address],
+    packets: u128,
+    bytes: u128,
+    direction: TrafficDirection,
+    service: Service,
 ) {
-    let address_to_lookup = get_address_to_lookup(key, traffic_direction);
-    let my_interface_addresses = my_device.addresses.lock().unwrap().clone();
+    let now = Instant::now();
 
-    // perform rDNS lookup
-    let lookup_result = lookup_addr(&address_to_lookup.parse().unwrap());
+    info_traffic_msg
+        .tot_data_info
+        .add_packets(packets, bytes, direction, now);
 
-    // get new host info and build the new host
-    let traffic_type = get_traffic_type(
-        &address_to_lookup,
-        &my_interface_addresses,
-        traffic_direction,
-    );
-    let is_loopback = is_loopback(&address_to_lookup);
-    let is_local = is_local_connection(&address_to_lookup, &my_interface_addresses);
-    let country = get_country(&address_to_lookup, country_db_reader);
-    let asn = get_asn(&address_to_lookup, asn_db_reader);
-    let r_dns = if let Ok(result) = lookup_result {
-        if result.is_empty() {
-            address_to_lookup.clone()
-        } else {
-            result
-        }
-    } else {
-        address_to_lookup.clone()
-    };
-    let new_host = Host {
-        domain: get_domain_from_r_dns(r_dns.clone()),
-        asn,
-        country,
-    };
-
-    let mut info_traffic_lock = info_traffic.lock().unwrap();
-    // collect the data exchanged from the same address so far and remove the address from the collection of addresses waiting a rDNS
-    let other_data = info_traffic_lock
-        .addresses_waiting_resolution
-        .remove(&address_to_lookup)
-        .unwrap_or_default();
-    // insert the newly resolved host in the collections, with the data it exchanged so far
-    info_traffic_lock
+    // check the rDNS status of this address and act accordingly
+    let address_to_lookup = get_address_to_lookup(key, direction);
+    let mut r_dns_waiting_resolution = false;
+    let r_dns_already_resolved = resolutions_state
         .addresses_resolved
-        .insert(address_to_lookup, (r_dns, new_host.clone()));
-    info_traffic_lock
-        .hosts
-        .entry(new_host.clone())
-        .and_modify(|data_info_host| {
-            data_info_host.data_info += other_data;
-        })
-        .or_insert_with(|| DataInfoHost {
-            data_info: other_data,
-            is_favorite: false,
-            is_loopback,
-            is_local,
-            traffic_type,
-        });
-    // check if the newly resolved host was featured in the favorites (possible in case of already existing host)
-    if info_traffic_lock.favorite_hosts.contains(&new_host) {
-        info_traffic_lock.favorites_last_interval.insert(new_host);
+        .contains_key(&address_to_lookup);
+    if !r_dns_already_resolved {
+        r_dns_waiting_resolution = resolutions_state
+            .addresses_waiting_resolution
+            .contains_key(&address_to_lookup);
     }
 
-    drop(info_traffic_lock);
+    match (r_dns_waiting_resolution, r_dns_already_resolved) {
+        (false, false) => {
+            // rDNS not requested yet (first occurrence of this address to lookup)
+
+            // Add this address to the map of addresses waiting for a resolution
+            // Useful to NOT perform again a rDNS lookup for this entry
+            let mut data_info = DataInfo::default();
+            data_info.add_packets(packets, bytes, direction, now);
+            resolutions_state
+                .addresses_waiting_resolution
+                .insert(address_to_lookup, data_info);
+
+            // send the rDNS lookup request to the thread pool
+            let _ = resolutions_state.lookup_request_tx.try_send((
+                *key,
+                direction,
+                my_interface_addresses.to_vec(),
+            ));
+        }
+        (true, false) => {
+            // waiting for a previously requested rDNS resolution
+            // update the corresponding waiting address data
+            resolutions_state
+                .addresses_waiting_resolution
+                .entry(address_to_lookup)
+                .and_modify(|data_info| {
+                    data_info.add_packets(packets, bytes, direction, now);
+                });
+        }
+        (_, true) => {
+            // rDNS already resolved
+            // update the corresponding host's data info
+            let host = resolutions_state
+                .addresses_resolved
+                .get(&address_to_lookup)
+                .cloned()
+                .unwrap_or_default();
+            info_traffic_msg
+                .hosts
+                .entry(host)
+                .and_modify(|data_info_host| {
+                    data_info_host
+                        .data_info
+                        .add_packets(packets, bytes, direction, now);
+                })
+                .or_insert_with(|| {
+                    let traffic_type =
+                        get_traffic_type(&address_to_lookup, my_interface_addresses, direction);
+                    let is_loopback = address_to_lookup.is_loopback();
+                    let is_local = is_local_connection(&address_to_lookup, my_interface_addresses);
+                    let is_bogon = is_bogon(&address_to_lookup);
+                    let mut data_info = DataInfo::default();
+                    data_info.add_packets(packets, bytes, direction, now);
+                    DataInfoHost {
+                        data_info,
+                        is_loopback,
+                        is_local,
+                        is_bogon,
+                        traffic_type,
+                    }
+                });
+        }
+    }
+
+    //increment the packet count for the sniffed service
+    info_traffic_msg
+        .services
+        .entry(service)
+        .and_modify(|data_info| {
+            data_info.add_packets(packets, bytes, direction, now);
+        })
+        .or_insert_with(|| {
+            let mut data_info = DataInfo::default();
+            data_info.add_packets(packets, bytes, direction, now);
+            data_info
+        });
 }
 
 /// Returns the traffic direction observed (incoming or outgoing)
 fn get_traffic_direction(
-    source_ip: &String,
-    destination_ip: &String,
+    source_ip: &IpAddr,
+    destination_ip: &IpAddr,
     source_port: Option<u16>,
     dest_port: Option<u16>,
     my_interface_addresses: &[Address],
 ) -> TrafficDirection {
-    let my_interface_addresses_string: Vec<String> = my_interface_addresses
-        .iter()
-        .map(|address| address.addr.to_string())
-        .collect();
-
     // first let's handle TCP and UDP loopback
-    if is_loopback(source_ip) && is_loopback(destination_ip) {
-        if let (Some(sport), Some(dport)) = (source_port, dest_port) {
-            return if sport > dport {
-                TrafficDirection::Outgoing
-            } else {
-                TrafficDirection::Incoming
-            };
-        }
+    if source_ip.is_loopback()
+        && destination_ip.is_loopback()
+        && let (Some(src_port), Some(dst_port)) = (source_port, dest_port)
+    {
+        return if src_port > dst_port {
+            TrafficDirection::Outgoing
+        } else {
+            TrafficDirection::Incoming
+        };
     }
 
-    if my_interface_addresses_string.contains(source_ip) {
+    // if interface_addresses is empty, check if the IP is a bogon (useful when importing pcap files)
+    let is_local = |ip: &IpAddr| -> bool {
+        if my_interface_addresses.is_empty() {
+            is_bogon(ip).is_some()
+        } else {
+            my_interface_addresses.iter().any(|a| a.addr == *ip)
+        }
+    };
+
+    if is_local(source_ip) {
         // source is local
         TrafficDirection::Outgoing
-    } else if source_ip.ne("0.0.0.0") && source_ip.ne("::") {
+    } else if source_ip.ne(&IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+        && source_ip.ne(&IpAddr::V6(Ipv6Addr::UNSPECIFIED))
+    {
         // source not local and different from 0.0.0.0 and different from ::
         TrafficDirection::Incoming
-    } else if !my_interface_addresses_string.contains(destination_ip) {
+    } else if !is_local(destination_ip) {
         // source is 0.0.0.0 or :: (local not yet assigned an IP) and destination is not local
         TrafficDirection::Outgoing
     } else {
@@ -408,12 +342,12 @@ fn get_traffic_direction(
 /// Returns the traffic type observed (unicast, multicast or broadcast)
 /// It refers to the remote host
 pub fn get_traffic_type(
-    destination_ip: &str,
+    destination_ip: &IpAddr,
     my_interface_addresses: &[Address],
     traffic_direction: TrafficDirection,
 ) -> TrafficType {
     if traffic_direction.eq(&TrafficDirection::Outgoing) {
-        if is_multicast_address(destination_ip) {
+        if destination_ip.is_multicast() {
             TrafficType::Multicast
         } else if is_broadcast_address(destination_ip, my_interface_addresses) {
             TrafficType::Broadcast
@@ -425,128 +359,71 @@ pub fn get_traffic_type(
     }
 }
 
-/// Determines if the input address is a multicast address or not.
-///
-/// # Arguments
-///
-/// * `address` - string representing an IPv4 or IPv6 network address.
-fn is_multicast_address(address: &str) -> bool {
-    let mut ret_val = false;
-    if address.contains(':') {
-        //IPv6 address
-        if address.starts_with("ff") {
-            ret_val = true;
-        }
-    } else {
-        //IPv4 address
-        let first_group = address
-            .split('.')
-            .next()
-            .unwrap()
-            .to_string()
-            .parse::<u8>()
-            .unwrap();
-        if (224..=239).contains(&first_group) {
-            ret_val = true;
-        }
-    }
-    ret_val
-}
-
 /// Determines if the input address is a broadcast address or not.
 ///
 /// # Arguments
 ///
 /// * `address` - string representing an IPv4 or IPv6 network address.
-fn is_broadcast_address(address: &str, my_interface_addresses: &[Address]) -> bool {
-    if address.eq("255.255.255.255") {
+fn is_broadcast_address(address: &IpAddr, my_interface_addresses: &[Address]) -> bool {
+    if address.eq(&IpAddr::from([255, 255, 255, 255])) {
         return true;
     }
     // check if directed broadcast
-    let my_broadcast_addresses: Vec<String> = my_interface_addresses
-        .iter()
-        .map(|address| {
-            address
-                .broadcast_addr
-                .unwrap_or_else(|| "255.255.255.255".parse().unwrap())
-                .to_string()
-        })
-        .collect();
-    if my_broadcast_addresses.contains(&address.to_string()) {
-        return true;
-    }
-    false
-}
-
-fn is_loopback(address_to_lookup: &str) -> bool {
-    IpAddr::from_str(address_to_lookup)
-        .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
-        .is_loopback()
+    my_interface_addresses.iter().any(|a| {
+        a.broadcast_addr
+            .unwrap_or_else(|| IpAddr::from([255, 255, 255, 255]))
+            == *address
+    })
 }
 
 /// Determines if the connection is local
-pub fn is_local_connection(address_to_lookup: &str, my_interface_addresses: &Vec<Address>) -> bool {
+pub fn is_local_connection(address_to_lookup: &IpAddr, my_interface_addresses: &[Address]) -> bool {
     let mut ret_val = false;
-
-    let address_to_lookup_type = if address_to_lookup.contains(':') {
-        IPv6
-    } else {
-        IPv4
-    };
 
     for address in my_interface_addresses {
         match address.addr {
-            IpAddr::V4(local_addr) if address_to_lookup_type.eq(&IPv4) => {
-                // check if the two IPv4 addresses are in the same subnet
-                let address_to_lookup_parsed: Ipv4Addr = address_to_lookup
-                    .parse()
-                    .unwrap_or_else(|_| Ipv4Addr::from(0));
-                // remote is link local?
-                if address_to_lookup_parsed.is_link_local() {
-                    ret_val = true;
-                }
-                // is the same subnet?
-                else if let Some(IpAddr::V4(netmask)) = address.netmask {
-                    let mut local_subnet = Vec::new();
-                    let mut remote_subnet = Vec::new();
-                    let netmask_digits = netmask.octets();
-                    let local_addr_digits = local_addr.octets();
-                    let remote_addr_digits = address_to_lookup_parsed.octets();
-                    for (i, netmask_digit) in netmask_digits.iter().enumerate() {
-                        local_subnet.push(netmask_digit & local_addr_digits[i]);
-                        remote_subnet.push(netmask_digit & remote_addr_digits[i]);
-                    }
-                    if local_subnet == remote_subnet {
+            IpAddr::V4(local_addr) => {
+                if let IpAddr::V4(address_to_lookup_v4) = address_to_lookup {
+                    // remote is link local?
+                    if address_to_lookup_v4.is_link_local() {
                         ret_val = true;
+                    }
+                    // is the same subnet?
+                    else if let Some(IpAddr::V4(netmask)) = address.netmask {
+                        let netmask_digits = netmask.octets();
+                        let local_addr_digits = local_addr.octets();
+                        let remote_addr_digits = address_to_lookup_v4.octets();
+                        if netmask_digits
+                            .iter()
+                            .enumerate()
+                            .all(|(i, m)| (m & local_addr_digits[i]) == (m & remote_addr_digits[i]))
+                        {
+                            ret_val = true;
+                        }
                     }
                 }
             }
-            IpAddr::V6(local_addr) if address_to_lookup_type.eq(&IPv6) => {
-                // check if the two IPv6 addresses are in the same subnet
-                let address_to_lookup_parsed: Ipv6Addr = address_to_lookup
-                    .parse()
-                    .unwrap_or_else(|_| Ipv6Addr::from(0));
-                // remote is link local?
-                if address_to_lookup.starts_with("fe80") {
-                    ret_val = true;
-                }
-                // is the same subnet?
-                else if let Some(IpAddr::V6(netmask)) = address.netmask {
-                    let mut local_subnet = Vec::new();
-                    let mut remote_subnet = Vec::new();
-                    let netmask_digits = netmask.octets();
-                    let local_addr_digits = local_addr.octets();
-                    let remote_addr_digits = address_to_lookup_parsed.octets();
-                    for (i, netmask_digit) in netmask_digits.iter().enumerate() {
-                        local_subnet.push(netmask_digit & local_addr_digits[i]);
-                        remote_subnet.push(netmask_digit & remote_addr_digits[i]);
-                    }
-                    if local_subnet == remote_subnet {
+            IpAddr::V6(local_addr) => {
+                if let IpAddr::V6(address_to_lookup_v6) = address_to_lookup {
+                    // remote is link local?
+                    if address_to_lookup_v6.is_unicast_link_local() {
                         ret_val = true;
+                    }
+                    // is the same subnet?
+                    else if let Some(IpAddr::V6(netmask)) = address.netmask {
+                        let netmask_digits = netmask.octets();
+                        let local_addr_digits = local_addr.octets();
+                        let remote_addr_digits = address_to_lookup_v6.octets();
+                        if netmask_digits
+                            .iter()
+                            .enumerate()
+                            .all(|(i, m)| (m & local_addr_digits[i]) == (m & remote_addr_digits[i]))
+                        {
+                            ret_val = true;
+                        }
                     }
                 }
             }
-            _ => {}
         }
     }
 
@@ -554,63 +431,56 @@ pub fn is_local_connection(address_to_lookup: &str, my_interface_addresses: &Vec
 }
 
 /// Determines if the address passed as parameter belong to the chosen adapter
-pub fn is_my_address(local_address: &String, my_interface_addresses: &Vec<Address>) -> bool {
+pub fn is_my_address(local_address: &IpAddr, my_interface_addresses: &[Address]) -> bool {
     for address in my_interface_addresses {
-        if address.addr.to_string().eq(local_address) {
+        if address.addr.eq(local_address) {
             return true;
         }
     }
-    is_loopback(local_address)
+    local_address.is_loopback()
 }
 
-/// Converts a MAC address in its hexadecimal form
-fn mac_from_dec_to_hex(mac_dec: [u8; 6]) -> String {
-    let mut mac_hex = String::new();
-    for n in &mac_dec {
-        mac_hex.push_str(&format!("{n:02x}:"));
-    }
-    mac_hex.pop();
-    mac_hex
-}
-
-pub fn get_address_to_lookup(key: &AddressPortPair, traffic_direction: TrafficDirection) -> String {
+pub fn get_address_to_lookup(key: &AddressPortPair, traffic_direction: TrafficDirection) -> IpAddr {
     match traffic_direction {
-        TrafficDirection::Outgoing => key.address2.clone(),
-        TrafficDirection::Incoming => key.address1.clone(),
+        TrafficDirection::Outgoing => key.dst_ip,
+        TrafficDirection::Incoming => key.src_ip,
     }
+}
+
+pub fn get_local_port(
+    key: &AddressPortPair,
+    traffic_direction: TrafficDirection,
+) -> Option<(u16, listeners::Protocol)> {
+    let port = match traffic_direction {
+        TrafficDirection::Outgoing => key.src_port,
+        TrafficDirection::Incoming => key.dst_port,
+    };
+    let protocol = match key.protocol {
+        Protocol::Tcp => Some(listeners::Protocol::TCP),
+        Protocol::Udp => Some(listeners::Protocol::UDP),
+        _ => None,
+    };
+    port.zip(protocol)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-    use std::net::IpAddr;
-
     use pcap::Address;
+    use std::collections::HashSet;
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    use std::str::FromStr;
 
+    use crate::Protocol;
+    use crate::Service;
     use crate::networking::manage_packets::{
         get_service, get_traffic_direction, get_traffic_type, is_local_connection,
-        mac_from_dec_to_hex,
     };
     use crate::networking::types::address_port_pair::AddressPortPair;
     use crate::networking::types::service_query::ServiceQuery;
     use crate::networking::types::traffic_direction::TrafficDirection;
     use crate::networking::types::traffic_type::TrafficType;
-    use crate::Protocol;
-    use crate::Service;
 
     include!(concat!(env!("OUT_DIR"), "/services.rs"));
-
-    #[test]
-    fn mac_simple_test() {
-        let result = mac_from_dec_to_hex([255, 255, 10, 177, 9, 15]);
-        assert_eq!(result, "ff:ff:0a:b1:09:0f".to_string());
-    }
-
-    #[test]
-    fn mac_all_zero_test() {
-        let result = mac_from_dec_to_hex([0, 0, 0, 0, 0, 0]);
-        assert_eq!(result, "00:00:00:00:00:00".to_string());
-    }
 
     #[test]
     fn ipv6_simple_test() {
@@ -724,40 +594,40 @@ mod tests {
         address_vec.push(my_address_v6);
 
         let result1 = get_traffic_direction(
-            &"172.20.10.9".to_string(),
-            &"99.88.77.00".to_string(),
+            &IpAddr::from([172, 20, 10, 9]),
+            &IpAddr::from([99, 88, 77, 0]),
             Some(99),
             Some(99),
             &address_vec,
         );
         assert_eq!(result1, TrafficDirection::Outgoing);
         let result2 = get_traffic_direction(
-            &"172.20.10.10".to_string(),
-            &"172.20.10.9".to_string(),
+            &IpAddr::from([172, 20, 10, 10]),
+            &IpAddr::from([172, 20, 10, 9]),
             Some(99),
             Some(99),
             &address_vec,
         );
         assert_eq!(result2, TrafficDirection::Incoming);
         let result3 = get_traffic_direction(
-            &"172.20.10.9".to_string(),
-            &"0.0.0.0".to_string(),
+            &IpAddr::from([172, 20, 10, 9]),
+            &IpAddr::V4(Ipv4Addr::UNSPECIFIED),
             Some(99),
             Some(99),
             &address_vec,
         );
         assert_eq!(result3, TrafficDirection::Outgoing);
         let result4 = get_traffic_direction(
-            &"0.0.0.0".to_string(),
-            &"172.20.10.9".to_string(),
+            &IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            &IpAddr::from([172, 20, 10, 9]),
             Some(99),
             Some(99),
             &address_vec,
         );
         assert_eq!(result4, TrafficDirection::Incoming);
         let result4 = get_traffic_direction(
-            &"0.0.0.0".to_string(),
-            &"172.20.10.10".to_string(),
+            &IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            &IpAddr::from([172, 20, 10, 10]),
             Some(99),
             Some(99),
             &address_vec,
@@ -767,53 +637,129 @@ mod tests {
 
     #[test]
     fn traffic_type_multicast_ipv4_test() {
-        let result1 = get_traffic_type("227.255.255.0", &[], TrafficDirection::Outgoing);
+        let result1 = get_traffic_type(
+            &IpAddr::from([227, 255, 255, 0]),
+            &[],
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result1, TrafficType::Multicast);
-        let result2 = get_traffic_type("239.255.255.255", &[], TrafficDirection::Outgoing);
+        let result2 = get_traffic_type(
+            &IpAddr::from([239, 255, 255, 255]),
+            &[],
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result2, TrafficType::Multicast);
-        let result3 = get_traffic_type("224.0.0.0", &[], TrafficDirection::Outgoing);
+        let result3 = get_traffic_type(
+            &IpAddr::from([224, 0, 0, 0]),
+            &[],
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result3, TrafficType::Multicast);
-        let result4 = get_traffic_type("223.255.255.255", &[], TrafficDirection::Outgoing);
+        let result4 = get_traffic_type(
+            &IpAddr::from([223, 255, 255, 255]),
+            &[],
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result4, TrafficType::Unicast);
-        let result5 = get_traffic_type("240.0.0.0", &[], TrafficDirection::Outgoing);
+        let result5 = get_traffic_type(
+            &IpAddr::from([240, 0, 0, 0]),
+            &[],
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result5, TrafficType::Unicast);
 
-        let result6 = get_traffic_type("227.255.255.0", &[], TrafficDirection::Incoming);
+        let result6 = get_traffic_type(
+            &IpAddr::from([227, 255, 255, 0]),
+            &[],
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result6, TrafficType::Unicast);
-        let result7 = get_traffic_type("239.255.255.255", &[], TrafficDirection::Incoming);
+        let result7 = get_traffic_type(
+            &IpAddr::from([239, 255, 255, 255]),
+            &[],
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result7, TrafficType::Unicast);
-        let result8 = get_traffic_type("224.0.0.0", &[], TrafficDirection::Incoming);
+        let result8 = get_traffic_type(
+            &IpAddr::from([224, 0, 0, 0]),
+            &[],
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result8, TrafficType::Unicast);
-        let result9 = get_traffic_type("223.255.255.255", &[], TrafficDirection::Incoming);
+        let result9 = get_traffic_type(
+            &IpAddr::from([223, 255, 255, 255]),
+            &[],
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result9, TrafficType::Unicast);
-        let result10 = get_traffic_type("240.0.0.0", &[], TrafficDirection::Incoming);
+        let result10 = get_traffic_type(
+            &IpAddr::from([240, 0, 0, 0]),
+            &[],
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result10, TrafficType::Unicast);
     }
 
     #[test]
     fn traffic_type_multicast_ipv6_test() {
-        let result1 = get_traffic_type("ff::", &[], TrafficDirection::Outgoing);
+        let result1 = get_traffic_type(
+            &IpAddr::from_str("ff00::").unwrap(),
+            &[],
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result1, TrafficType::Multicast);
-        let result2 = get_traffic_type("fe80:1234::", &[], TrafficDirection::Outgoing);
+        let result2 = get_traffic_type(
+            &IpAddr::from_str("fe80:1234::").unwrap(),
+            &[],
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result2, TrafficType::Unicast);
-        let result3 = get_traffic_type("ffff:ffff:ffff::", &[], TrafficDirection::Outgoing);
+        let result3 = get_traffic_type(
+            &IpAddr::from_str("ffff:ffff:ffff::").unwrap(),
+            &[],
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result3, TrafficType::Multicast);
 
-        let result4 = get_traffic_type("ff::", &[], TrafficDirection::Incoming);
+        let result4 = get_traffic_type(
+            &IpAddr::from_str("ff00::").unwrap(),
+            &[],
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result4, TrafficType::Unicast);
-        let result5 = get_traffic_type("fe80:1234::", &[], TrafficDirection::Incoming);
+        let result5 = get_traffic_type(
+            &IpAddr::from_str("fe80:1234::").unwrap(),
+            &[],
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result5, TrafficType::Unicast);
-        let result6 = get_traffic_type("ffff:ffff:ffff::", &[], TrafficDirection::Incoming);
+        let result6 = get_traffic_type(
+            &IpAddr::from_str("ffff:ffff:ffff::").unwrap(),
+            &[],
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result6, TrafficType::Unicast);
     }
 
     #[test]
     fn traffic_type_host_local_broadcast_test() {
-        let result1 = get_traffic_type("255.255.255.255", &[], TrafficDirection::Outgoing);
+        let result1 = get_traffic_type(
+            &IpAddr::from([255, 255, 255, 255]),
+            &[],
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result1, TrafficType::Broadcast);
-        let result2 = get_traffic_type("255.255.255.255", &[], TrafficDirection::Incoming);
+        let result2 = get_traffic_type(
+            &IpAddr::from([255, 255, 255, 255]),
+            &[],
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result2, TrafficType::Unicast);
-        let result3 = get_traffic_type("255.255.255.254", &[], TrafficDirection::Outgoing);
+        let result3 = get_traffic_type(
+            &IpAddr::from([255, 255, 255, 254]),
+            &[],
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result3, TrafficType::Unicast);
 
         let mut address_vec: Vec<Address> = Vec::new();
@@ -825,17 +771,33 @@ mod tests {
         };
         address_vec.push(my_address);
 
-        let result1 = get_traffic_type("255.255.255.255", &address_vec, TrafficDirection::Outgoing);
+        let result1 = get_traffic_type(
+            &IpAddr::from([255, 255, 255, 255]),
+            &address_vec,
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result1, TrafficType::Broadcast);
-        let result2 = get_traffic_type("255.255.255.255", &address_vec, TrafficDirection::Incoming);
+        let result2 = get_traffic_type(
+            &IpAddr::from([255, 255, 255, 255]),
+            &address_vec,
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result2, TrafficType::Unicast);
     }
 
     #[test]
     fn traffic_type_host_directed_broadcast_test() {
-        let result1 = get_traffic_type("172.20.10.15", &[], TrafficDirection::Outgoing);
+        let result1 = get_traffic_type(
+            &IpAddr::from([172, 20, 10, 15]),
+            &[],
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result1, TrafficType::Unicast);
-        let result2 = get_traffic_type("172.20.10.15", &[], TrafficDirection::Incoming);
+        let result2 = get_traffic_type(
+            &IpAddr::from([172, 20, 10, 15]),
+            &[],
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result2, TrafficType::Unicast);
 
         let mut address_vec: Vec<Address> = Vec::new();
@@ -847,9 +809,17 @@ mod tests {
         };
         address_vec.push(my_address);
 
-        let result1 = get_traffic_type("172.20.10.15", &address_vec, TrafficDirection::Outgoing);
+        let result1 = get_traffic_type(
+            &IpAddr::from([172, 20, 10, 15]),
+            &address_vec,
+            TrafficDirection::Outgoing,
+        );
         assert_eq!(result1, TrafficType::Broadcast);
-        let result2 = get_traffic_type("172.20.10.15", &address_vec, TrafficDirection::Incoming);
+        let result2 = get_traffic_type(
+            &IpAddr::from([172, 20, 10, 15]),
+            &address_vec,
+            TrafficDirection::Incoming,
+        );
         assert_eq!(result2, TrafficType::Unicast);
     }
 
@@ -871,22 +841,22 @@ mod tests {
         address_vec.push(my_address_v4);
         address_vec.push(my_address_v6);
 
-        let result1 = is_local_connection("104.18.43.158", &address_vec);
+        let result1 = is_local_connection(&IpAddr::from([104, 18, 43, 158]), &address_vec);
         assert_eq!(result1, false);
 
-        let result2 = is_local_connection("172.20.10.15", &address_vec);
+        let result2 = is_local_connection(&IpAddr::from([172, 20, 10, 15]), &address_vec);
         assert_eq!(result2, true);
 
-        let result3 = is_local_connection("172.20.10.16", &address_vec);
+        let result3 = is_local_connection(&IpAddr::from([172, 20, 10, 16]), &address_vec);
         assert_eq!(result3, false);
 
-        let result4 = is_local_connection("172.20.10.0", &address_vec);
+        let result4 = is_local_connection(&IpAddr::from([172, 20, 10, 0]), &address_vec);
         assert_eq!(result4, true);
 
-        let result5 = is_local_connection("172.20.10.7", &address_vec);
+        let result5 = is_local_connection(&IpAddr::from([172, 20, 10, 7]), &address_vec);
         assert_eq!(result5, true);
 
-        let result6 = is_local_connection("172.20.10.99", &address_vec);
+        let result6 = is_local_connection(&IpAddr::from([172, 20, 10, 99]), &address_vec);
         assert_eq!(result6, false);
     }
 
@@ -900,7 +870,7 @@ mod tests {
             dst_addr: None,
         };
         let my_address_v6 = Address {
-            addr: IpAddr::V6("fe90:8b1:1234:5678:d065::1234".parse().unwrap()),
+            addr: IpAddr::V6("de90:8b1:1234:5678:d065::1234".parse().unwrap()),
             netmask: Some(IpAddr::V6("ffff:ffff:ffff:ff11::".parse().unwrap())),
             broadcast_addr: None,
             dst_addr: None,
@@ -908,17 +878,35 @@ mod tests {
         address_vec.push(my_address_v4);
         address_vec.push(my_address_v6);
 
-        let result1 = is_local_connection("fe90:8b1:1234:5611:d065::1234", &address_vec);
+        let result1 = is_local_connection(
+            &IpAddr::from_str("de90:8b1:1234:5611:d065::1234").unwrap(),
+            &address_vec,
+        );
         assert_eq!(result1, false);
 
-        let result2 = is_local_connection("fe90:8b1:1234:5610:d065::1234", &address_vec);
+        let result2 = is_local_connection(
+            &IpAddr::from_str("de90:8b1:1234:5610:d065::1234").unwrap(),
+            &address_vec,
+        );
         assert_eq!(result2, true);
 
-        let result3 = is_local_connection("ff90:8b1:1234:5610:d065::1234", &address_vec);
+        let result3 = is_local_connection(
+            &IpAddr::from_str("ff90:8b1:1234:5610:d065::1234").unwrap(),
+            &address_vec,
+        );
         assert_eq!(result3, false);
 
-        let result4 = is_local_connection("fe90:8b1:1234:5610:ffff:eeee:9876:1234", &address_vec);
+        let result4 = is_local_connection(
+            &IpAddr::from_str("de90:8b1:1234:5610:ffff:eeee:9876:1234").unwrap(),
+            &address_vec,
+        );
         assert_eq!(result4, true);
+
+        let result5 = is_local_connection(
+            &IpAddr::from_str("df90:8b1:1234:5610:d065::1234").unwrap(),
+            &address_vec,
+        );
+        assert_eq!(result5, false);
     }
 
     #[test]
@@ -939,28 +927,28 @@ mod tests {
         address_vec.push(my_address_v4);
         address_vec.push(my_address_v6);
 
-        let result1 = is_local_connection("255.255.255.255", &address_vec);
+        let result1 = is_local_connection(&IpAddr::from([255, 255, 255, 255]), &address_vec);
         assert_eq!(result1, false);
 
-        let result2 = is_local_connection("172.20.10.9", &address_vec);
+        let result2 = is_local_connection(&IpAddr::from([172, 20, 10, 9]), &address_vec);
         assert_eq!(result2, true);
 
-        let result3 = is_local_connection("172.20.10.9", &address_vec);
+        let result3 = is_local_connection(&IpAddr::from([172, 20, 10, 9]), &address_vec);
         assert_eq!(result3, true);
 
-        let result4 = is_local_connection("172.20.10.9", &address_vec);
+        let result4 = is_local_connection(&IpAddr::from([172, 20, 10, 9]), &address_vec);
         assert_eq!(result4, true);
 
-        let result5 = is_local_connection("172.20.10.7", &address_vec);
+        let result5 = is_local_connection(&IpAddr::from([172, 20, 10, 7]), &address_vec);
         assert_eq!(result5, true);
 
-        let result6 = is_local_connection("172.20.10.99", &address_vec);
+        let result6 = is_local_connection(&IpAddr::from([172, 20, 10, 99]), &address_vec);
         assert_eq!(result6, true);
 
-        let result7 = is_local_connection("172.20.11.0", &address_vec);
+        let result7 = is_local_connection(&IpAddr::from([172, 20, 11, 0]), &address_vec);
         assert_eq!(result7, false);
 
-        let result8 = is_local_connection("172.20.9.255", &address_vec);
+        let result8 = is_local_connection(&IpAddr::from([172, 20, 9, 255]), &address_vec);
         assert_eq!(result8, false);
     }
 
@@ -982,7 +970,7 @@ mod tests {
         address_vec.push(my_address_v4);
         address_vec.push(my_address_v6);
 
-        let result1 = is_local_connection("224.0.0.251", &address_vec);
+        let result1 = is_local_connection(&IpAddr::from([224, 0, 0, 251]), &address_vec);
         assert_eq!(result1, false);
     }
 
@@ -1004,7 +992,7 @@ mod tests {
         address_vec.push(my_address_v4);
         address_vec.push(my_address_v6);
 
-        let result1 = is_local_connection("ff::1234", &address_vec);
+        let result1 = is_local_connection(&IpAddr::from_str("ff::1234").unwrap(), &address_vec);
         assert_eq!(result1, false);
     }
 
@@ -1026,13 +1014,13 @@ mod tests {
         address_vec.push(my_address_v4);
         address_vec.push(my_address_v6);
 
-        let result1 = is_local_connection("224.0.1.2", &address_vec);
+        let result1 = is_local_connection(&IpAddr::from([224, 0, 1, 2]), &address_vec);
         assert_eq!(result1, false);
 
-        let result2 = is_local_connection("169.254.17.199", &address_vec);
+        let result2 = is_local_connection(&IpAddr::from([169, 254, 17, 199]), &address_vec);
         assert_eq!(result2, true);
 
-        let result3 = is_local_connection("169.255.17.199", &address_vec);
+        let result3 = is_local_connection(&IpAddr::from([169, 255, 17, 199]), &address_vec);
         assert_eq!(result3, false);
     }
 
@@ -1054,40 +1042,54 @@ mod tests {
         address_vec.push(my_address_v4);
         address_vec.push(my_address_v6);
 
-        let result1 = is_local_connection("ff88::", &address_vec);
+        let result1 = is_local_connection(&IpAddr::from_str("ff88::").unwrap(), &address_vec);
         assert_eq!(result1, false);
 
-        let result2 = is_local_connection("fe80::8b1:1234:5678:d065", &address_vec);
+        let result2 = is_local_connection(
+            &IpAddr::from_str("fe80::8b1:1234:5678:d065").unwrap(),
+            &address_vec,
+        );
         assert_eq!(result2, true);
 
-        let result3 = is_local_connection("fe70::8b1:1234:5678:d065", &address_vec);
+        let result3 = is_local_connection(
+            &IpAddr::from_str("fe70::8b1:1234:5678:d065").unwrap(),
+            &address_vec,
+        );
         assert_eq!(result3, false);
     }
 
     #[test]
     fn test_get_service_simple_only_one_valid() {
         let unknown_port = Some(65000);
-        for p in [Protocol::TCP, Protocol::UDP] {
-            assert!(SERVICES
-                .get(&ServiceQuery(unknown_port.unwrap(), p))
-                .is_none());
+        for p in [Protocol::Tcp, Protocol::Udp] {
+            assert!(
+                SERVICES
+                    .get(&ServiceQuery(unknown_port.unwrap(), p))
+                    .is_none()
+            );
             for d in [TrafficDirection::Incoming, TrafficDirection::Outgoing] {
                 let key = AddressPortPair::new(
-                    String::new(),
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                     unknown_port,
-                    String::new(),
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                     unknown_port,
                     p,
                 );
-                assert_eq!(get_service(&key, d), Service::Unknown);
+                assert_eq!(get_service(&key, d, &[]), Service::Unknown);
 
                 for (p1, p2) in [
                     (unknown_port, Some(22)),
                     (Some(22), unknown_port),
                     (Some(22), Some(22)),
                 ] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
-                    assert_eq!(get_service(&key, d), Service::Name("ssh"));
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
+                    assert_eq!(get_service(&key, d, &[]), Service::Name("ssh"));
                 }
 
                 for (p1, p2) in [
@@ -1095,8 +1097,14 @@ mod tests {
                     (Some(443), unknown_port),
                     (Some(443), Some(443)),
                 ] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
-                    assert_eq!(get_service(&key, d), Service::Name("https"));
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
+                    assert_eq!(get_service(&key, d, &[]), Service::Name("https"));
                 }
 
                 for (p1, p2) in [
@@ -1104,8 +1112,14 @@ mod tests {
                     (Some(80), unknown_port),
                     (Some(80), Some(80)),
                 ] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
-                    assert_eq!(get_service(&key, d), Service::Name("http"));
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
+                    assert_eq!(get_service(&key, d, &[]), Service::Name("http"));
                 }
 
                 for (p1, p2) in [
@@ -1113,8 +1127,14 @@ mod tests {
                     (Some(1900), unknown_port),
                     (Some(1900), Some(1900)),
                 ] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
-                    assert_eq!(get_service(&key, d), Service::Name("upnp"));
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
+                    assert_eq!(get_service(&key, d, &[]), Service::Name("upnp"));
                 }
             }
         }
@@ -1123,7 +1143,7 @@ mod tests {
     #[test]
     fn test_get_service_well_known_ports_always_win() {
         let valid_but_not_well_known = Some(1030);
-        for p in [Protocol::TCP, Protocol::UDP] {
+        for p in [Protocol::Tcp, Protocol::Udp] {
             assert_eq!(
                 SERVICES
                     .get(&ServiceQuery(valid_but_not_well_known.unwrap(), p))
@@ -1132,21 +1152,27 @@ mod tests {
             );
             for d in [TrafficDirection::Incoming, TrafficDirection::Outgoing] {
                 let key = AddressPortPair::new(
-                    String::new(),
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                     valid_but_not_well_known,
-                    String::new(),
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
                     valid_but_not_well_known,
                     p,
                 );
-                assert_eq!(get_service(&key, d), Service::Name("iad1"));
+                assert_eq!(get_service(&key, d, &[]), Service::Name("iad1"));
 
                 for (p1, p2) in [
                     (valid_but_not_well_known, Some(67)),
                     (Some(67), valid_but_not_well_known),
                     (Some(67), Some(67)),
                 ] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
-                    assert_eq!(get_service(&key, d), Service::Name("dhcps"));
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
+                    assert_eq!(get_service(&key, d, &[]), Service::Name("dhcps"));
                 }
 
                 for (p1, p2) in [
@@ -1154,8 +1180,14 @@ mod tests {
                     (Some(179), valid_but_not_well_known),
                     (Some(179), Some(179)),
                 ] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
-                    assert_eq!(get_service(&key, d), Service::Name("bgp"));
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
+                    assert_eq!(get_service(&key, d, &[]), Service::Name("bgp"));
                 }
 
                 for (p1, p2) in [
@@ -1163,8 +1195,14 @@ mod tests {
                     (Some(53), valid_but_not_well_known),
                     (Some(53), Some(53)),
                 ] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
-                    assert_eq!(get_service(&key, d), Service::Name("domain"));
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
+                    assert_eq!(get_service(&key, d, &[]), Service::Name("domain"));
                 }
 
                 for (p1, p2) in [
@@ -1172,8 +1210,14 @@ mod tests {
                     (Some(1022), valid_but_not_well_known),
                     (Some(1022), Some(1022)),
                 ] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
-                    assert_eq!(get_service(&key, d), Service::Name("exp2"));
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
+                    assert_eq!(get_service(&key, d, &[]), Service::Name("exp2"));
                 }
             }
         }
@@ -1186,12 +1230,18 @@ mod tests {
         let netmagic = Some(1196);
         let tgp = Some(1223);
 
-        for p in [Protocol::TCP, Protocol::UDP] {
+        for p in [Protocol::Tcp, Protocol::Udp] {
             for d in [TrafficDirection::Incoming, TrafficDirection::Outgoing] {
                 for (p1, p2) in [(smtp, tacacs), (tacacs, smtp)] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
                     assert_eq!(
-                        get_service(&key, d),
+                        get_service(&key, d, &[]),
                         Service::Name(match (p1, d) {
                             (source, TrafficDirection::Incoming) if source == tacacs => "tacacs",
                             (source, TrafficDirection::Outgoing) if source == tacacs => "smtp",
@@ -1203,9 +1253,15 @@ mod tests {
                 }
 
                 for (p1, p2) in [(netmagic, tgp), (tgp, netmagic)] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
                     assert_eq!(
-                        get_service(&key, d),
+                        get_service(&key, d, &[]),
                         Service::Name(match (p1, d) {
                             (source, TrafficDirection::Incoming) if source == netmagic =>
                                 "netmagic",
@@ -1221,44 +1277,167 @@ mod tests {
     }
 
     #[test]
-    fn test_get_service_different_tcp_udp() {
-        for p in [Protocol::TCP, Protocol::UDP] {
-            for d in [TrafficDirection::Incoming, TrafficDirection::Outgoing] {
-                let key =
-                    AddressPortPair::new(String::new(), Some(5353), String::new(), Some(5353), p);
+    fn test_get_service_multicast_bonus_matters() {
+        let finger = Some(79);
+        let xfer = Some(82);
+        let cvc = Some(1495);
+        let upnp = Some(1900);
+
+        for p in [Protocol::Tcp, Protocol::Udp] {
+            for (p1, p2) in [(finger, xfer), (xfer, finger)] {
+                let key = AddressPortPair::new(
+                    IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                    p1,
+                    IpAddr::from_str("ff00::").unwrap(),
+                    p2,
+                    p,
+                );
                 assert_eq!(
-                    get_service(&key, d),
+                    get_service(&key, TrafficDirection::Incoming, &[]),
+                    Service::Name(match p1 {
+                        source if source == xfer => "finger",
+                        source if source == finger => "xfer",
+                        _ => panic!(),
+                    })
+                );
+            }
+
+            for (p1, p2) in [(cvc, upnp), (upnp, cvc)] {
+                let key = AddressPortPair::new(
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    p1,
+                    IpAddr::V4(Ipv4Addr::from([224, 1, 2, 3])),
+                    p2,
+                    p,
+                );
+                assert_eq!(
+                    get_service(&key, TrafficDirection::Incoming, &[]),
+                    Service::Name(match p1 {
+                        source if source == cvc => "upnp",
+                        source if source == upnp => "cvc",
+                        _ => panic!(),
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_service_broadcast_bonus_matters() {
+        let echo = Some(7);
+        let rje = Some(5);
+        let transact = Some(1869);
+        let radio = Some(1595);
+
+        for p in [Protocol::Tcp, Protocol::Udp] {
+            for (p1, p2) in [(echo, rje), (rje, echo)] {
+                let key = AddressPortPair::new(
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    p1,
+                    IpAddr::V4(Ipv4Addr::from([255, 255, 255, 255])),
+                    p2,
+                    p,
+                );
+                assert_eq!(
+                    get_service(&key, TrafficDirection::Incoming, &[]),
+                    Service::Name(match p1 {
+                        source if source == rje => "echo",
+                        source if source == echo => "rje",
+                        _ => panic!(),
+                    })
+                );
+            }
+
+            for (p1, p2) in [(transact, radio), (radio, transact)] {
+                let key = AddressPortPair::new(
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    p1,
+                    IpAddr::V4(Ipv4Addr::from([192, 168, 1, 255])),
+                    p2,
+                    p,
+                );
+                assert_eq!(
+                    get_service(
+                        &key,
+                        TrafficDirection::Incoming,
+                        &[pcap::Address {
+                            addr: IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                            dst_addr: None,
+                            netmask: None,
+                            broadcast_addr: Some(IpAddr::V4(Ipv4Addr::from([192, 168, 1, 255]))),
+                        }]
+                    ),
+                    Service::Name(match p1 {
+                        source if source == transact => "radio",
+                        source if source == radio => "transact",
+                        _ => panic!(),
+                    })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_get_service_different_tcp_udp() {
+        for p in [Protocol::Tcp, Protocol::Udp] {
+            for d in [TrafficDirection::Incoming, TrafficDirection::Outgoing] {
+                let key = AddressPortPair::new(
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    Some(5353),
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    Some(5353),
+                    p,
+                );
+                assert_eq!(
+                    get_service(&key, d, &[]),
                     Service::Name(match p {
-                        Protocol::TCP => "mdns",
-                        Protocol::UDP => "zeroconf",
-                        Protocol::ICMP => panic!(),
+                        Protocol::Tcp => "mdns",
+                        Protocol::Udp => "zeroconf",
+                        _ => panic!(),
                     })
                 );
 
-                let key = AddressPortPair::new(String::new(), Some(15), String::new(), Some(15), p);
+                let key = AddressPortPair::new(
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    Some(15),
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    Some(15),
+                    p,
+                );
                 assert_eq!(
-                    get_service(&key, d),
+                    get_service(&key, d, &[]),
                     match p {
-                        Protocol::TCP => Service::Name("netstat"),
-                        Protocol::UDP => Service::Unknown,
-                        Protocol::ICMP => panic!(),
+                        Protocol::Tcp => Service::Name("netstat"),
+                        Protocol::Udp => Service::Unknown,
+                        _ => panic!(),
                     }
                 );
 
-                let key =
-                    AddressPortPair::new(String::new(), Some(64738), String::new(), Some(64738), p);
+                let key = AddressPortPair::new(
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    Some(64738),
+                    IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                    Some(64738),
+                    p,
+                );
                 assert_eq!(
-                    get_service(&key, d),
+                    get_service(&key, d, &[]),
                     match p {
-                        Protocol::TCP => Service::Unknown,
-                        Protocol::UDP => Service::Name("murmur"),
-                        Protocol::ICMP => panic!(),
+                        Protocol::Tcp => Service::Unknown,
+                        Protocol::Udp => Service::Name("murmur"),
+                        _ => panic!(),
                     }
                 );
 
                 for (p1, p2) in [(Some(5353), Some(53)), (Some(53), Some(5353))] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
-                    assert_eq!(get_service(&key, d), Service::Name("domain"));
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
+                    assert_eq!(get_service(&key, d, &[]), Service::Name("domain"));
                 }
             }
         }
@@ -1266,11 +1445,24 @@ mod tests {
 
     #[test]
     fn test_get_service_not_applicable() {
-        for p in Protocol::ALL {
+        for p in [
+            Protocol::Tcp,
+            Protocol::Udp,
+            Protocol::Icmpv4,
+            Protocol::Icmpv6,
+            Protocol::Arp,
+            Protocol::Igmp,
+        ] {
             for d in [TrafficDirection::Incoming, TrafficDirection::Outgoing] {
                 for (p1, p2) in [(None, Some(443)), (None, None), (Some(443), None)] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
-                    assert_eq!(get_service(&key, d), Service::NotApplicable);
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
+                    assert_eq!(get_service(&key, d, &[]), Service::NotApplicable);
                 }
             }
         }
@@ -1280,13 +1472,17 @@ mod tests {
     fn test_get_service_unknown() {
         let unknown_port_1 = Some(39332);
         let unknown_port_2 = Some(23679);
-        for p in [Protocol::TCP, Protocol::UDP] {
-            assert!(SERVICES
-                .get(&ServiceQuery(unknown_port_1.unwrap(), p))
-                .is_none());
-            assert!(SERVICES
-                .get(&ServiceQuery(unknown_port_2.unwrap(), p))
-                .is_none());
+        for p in [Protocol::Tcp, Protocol::Udp] {
+            assert!(
+                SERVICES
+                    .get(&ServiceQuery(unknown_port_1.unwrap(), p))
+                    .is_none()
+            );
+            assert!(
+                SERVICES
+                    .get(&ServiceQuery(unknown_port_2.unwrap(), p))
+                    .is_none()
+            );
             for d in [TrafficDirection::Incoming, TrafficDirection::Outgoing] {
                 for (p1, p2) in [
                     (unknown_port_1, unknown_port_2),
@@ -1294,8 +1490,14 @@ mod tests {
                     (unknown_port_1, unknown_port_1),
                     (unknown_port_2, unknown_port_2),
                 ] {
-                    let key = AddressPortPair::new(String::new(), p1, String::new(), p2, p);
-                    assert_eq!(get_service(&key, d), Service::Unknown);
+                    let key = AddressPortPair::new(
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p1,
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                        p2,
+                        p,
+                    );
+                    assert_eq!(get_service(&key, d, &[]), Service::Unknown);
                 }
             }
         }
@@ -1303,11 +1505,11 @@ mod tests {
 
     #[test]
     fn test_all_services_map_key_and_values_are_valid() {
-        assert_eq!(SERVICES.len(), 12078);
+        assert_eq!(SERVICES.len(), 12093);
         let mut distinct_services = HashSet::new();
         for (sq, s) in &SERVICES {
             // only tcp or udp
-            assert!(sq.1 == Protocol::TCP || sq.1 == Protocol::UDP);
+            assert!(sq.1 == Protocol::Tcp || sq.1 == Protocol::Udp);
             // no unknown or not applicable services
             let name = match *s {
                 Service::Name(name) => name,
@@ -1324,12 +1526,12 @@ mod tests {
             // just to count and verify number of distinct services
             distinct_services.insert(name.to_string());
         }
-        assert_eq!(distinct_services.len(), 6450);
+        assert_eq!(distinct_services.len(), 6465);
     }
 
     #[test]
     fn test_service_names_of_old_application_protocols() {
-        for p in [Protocol::TCP, Protocol::UDP] {
+        for p in [Protocol::Tcp, Protocol::Udp] {
             // FTP
             assert_eq!(
                 SERVICES.get(&ServiceQuery(20, p)).unwrap(),
@@ -1501,38 +1703,38 @@ mod tests {
 
         // HTTP
         assert_eq!(
-            SERVICES.get(&ServiceQuery(8080, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(8080, Protocol::Tcp)).unwrap(),
             &Service::Name("http-proxy")
         );
         assert_eq!(
-            SERVICES.get(&ServiceQuery(8080, Protocol::UDP)).unwrap(),
+            SERVICES.get(&ServiceQuery(8080, Protocol::Udp)).unwrap(),
             &Service::Name("http-alt")
         );
 
         // LDAPS
         assert_eq!(
-            SERVICES.get(&ServiceQuery(636, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(636, Protocol::Tcp)).unwrap(),
             &Service::Name("ldapssl")
         );
         assert_eq!(
-            SERVICES.get(&ServiceQuery(636, Protocol::UDP)).unwrap(),
+            SERVICES.get(&ServiceQuery(636, Protocol::Udp)).unwrap(),
             &Service::Name("ldaps")
         );
 
         // mDNS
         assert_eq!(
-            SERVICES.get(&ServiceQuery(5353, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(5353, Protocol::Tcp)).unwrap(),
             &Service::Name("mdns")
         );
         assert_eq!(
-            SERVICES.get(&ServiceQuery(5353, Protocol::UDP)).unwrap(),
+            SERVICES.get(&ServiceQuery(5353, Protocol::Udp)).unwrap(),
             &Service::Name("zeroconf")
         );
     }
 
     #[test]
     fn test_other_service_names() {
-        for p in [Protocol::TCP, Protocol::UDP] {
+        for p in [Protocol::Tcp, Protocol::Udp] {
             assert!(SERVICES.get(&ServiceQuery(4, p)).is_none());
             assert!(SERVICES.get(&ServiceQuery(6, p)).is_none());
             assert_eq!(
@@ -1552,98 +1754,98 @@ mod tests {
         }
 
         assert_eq!(
-            SERVICES.get(&ServiceQuery(15, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(15, Protocol::Tcp)).unwrap(),
             &Service::Name("netstat")
         );
-        assert!(SERVICES.get(&ServiceQuery(15, Protocol::UDP)).is_none());
+        assert!(SERVICES.get(&ServiceQuery(15, Protocol::Udp)).is_none());
 
         assert_eq!(
-            SERVICES.get(&ServiceQuery(26, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(26, Protocol::Tcp)).unwrap(),
             &Service::Name("rsftp")
         );
-        assert!(SERVICES.get(&ServiceQuery(26, Protocol::UDP)).is_none());
+        assert!(SERVICES.get(&ServiceQuery(26, Protocol::Udp)).is_none());
 
         assert_eq!(
-            SERVICES.get(&ServiceQuery(87, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(87, Protocol::Tcp)).unwrap(),
             &Service::Name("priv-term-l")
         );
-        assert!(SERVICES.get(&ServiceQuery(87, Protocol::UDP)).is_none());
+        assert!(SERVICES.get(&ServiceQuery(87, Protocol::Udp)).is_none());
 
         assert_eq!(
-            SERVICES.get(&ServiceQuery(106, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(106, Protocol::Tcp)).unwrap(),
             &Service::Name("pop3pw")
         );
         assert_eq!(
-            SERVICES.get(&ServiceQuery(106, Protocol::UDP)).unwrap(),
+            SERVICES.get(&ServiceQuery(106, Protocol::Udp)).unwrap(),
             &Service::Name("3com-tsmux")
         );
 
-        assert!(SERVICES.get(&ServiceQuery(1028, Protocol::TCP)).is_none());
+        assert!(SERVICES.get(&ServiceQuery(1028, Protocol::Tcp)).is_none());
         assert_eq!(
-            SERVICES.get(&ServiceQuery(1028, Protocol::UDP)).unwrap(),
+            SERVICES.get(&ServiceQuery(1028, Protocol::Udp)).unwrap(),
             &Service::Name("ms-lsa")
         );
 
         assert_eq!(
-            SERVICES.get(&ServiceQuery(1029, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(1029, Protocol::Tcp)).unwrap(),
             &Service::Name("ms-lsa")
         );
         assert_eq!(
-            SERVICES.get(&ServiceQuery(1029, Protocol::UDP)).unwrap(),
+            SERVICES.get(&ServiceQuery(1029, Protocol::Udp)).unwrap(),
             &Service::Name("solid-mux")
         );
 
         assert_eq!(
-            SERVICES.get(&ServiceQuery(5820, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(5820, Protocol::Tcp)).unwrap(),
             &Service::Name("autopassdaemon")
         );
-        assert!(SERVICES.get(&ServiceQuery(5820, Protocol::UDP)).is_none());
+        assert!(SERVICES.get(&ServiceQuery(5820, Protocol::Udp)).is_none());
 
         assert_eq!(
-            SERVICES.get(&ServiceQuery(5900, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(5900, Protocol::Tcp)).unwrap(),
             &Service::Name("vnc")
         );
         assert_eq!(
-            SERVICES.get(&ServiceQuery(5900, Protocol::UDP)).unwrap(),
+            SERVICES.get(&ServiceQuery(5900, Protocol::Udp)).unwrap(),
             &Service::Name("rfb")
         );
 
         assert_eq!(
-            SERVICES.get(&ServiceQuery(5938, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(5938, Protocol::Tcp)).unwrap(),
             &Service::Name("teamviewer")
         );
-        assert!(SERVICES.get(&ServiceQuery(5938, Protocol::UDP)).is_none());
+        assert!(SERVICES.get(&ServiceQuery(5938, Protocol::Udp)).is_none());
 
         assert_eq!(
-            SERVICES.get(&ServiceQuery(8888, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(8888, Protocol::Tcp)).unwrap(),
             &Service::Name("sun-answerbook")
         );
         assert_eq!(
-            SERVICES.get(&ServiceQuery(8888, Protocol::UDP)).unwrap(),
+            SERVICES.get(&ServiceQuery(8888, Protocol::Udp)).unwrap(),
             &Service::Name("ddi-udp-1")
         );
 
         assert_eq!(
-            SERVICES.get(&ServiceQuery(23294, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(23294, Protocol::Tcp)).unwrap(),
             &Service::Name("5afe-dir")
         );
-        assert!(SERVICES.get(&ServiceQuery(23294, Protocol::UDP)).is_none());
+        assert!(SERVICES.get(&ServiceQuery(23294, Protocol::Udp)).is_none());
 
-        assert!(SERVICES.get(&ServiceQuery(48899, Protocol::TCP)).is_none());
+        assert!(SERVICES.get(&ServiceQuery(48899, Protocol::Tcp)).is_none());
         assert_eq!(
-            SERVICES.get(&ServiceQuery(48899, Protocol::UDP)).unwrap(),
+            SERVICES.get(&ServiceQuery(48899, Protocol::Udp)).unwrap(),
             &Service::Name("tc_ads_discovery")
         );
 
         assert_eq!(
-            SERVICES.get(&ServiceQuery(62078, Protocol::TCP)).unwrap(),
+            SERVICES.get(&ServiceQuery(62078, Protocol::Tcp)).unwrap(),
             &Service::Name("iphone-sync")
         );
-        assert!(SERVICES.get(&ServiceQuery(62078, Protocol::UDP)).is_none());
+        assert!(SERVICES.get(&ServiceQuery(62078, Protocol::Udp)).is_none());
 
-        assert!(SERVICES.get(&ServiceQuery(64738, Protocol::TCP)).is_none());
+        assert!(SERVICES.get(&ServiceQuery(64738, Protocol::Tcp)).is_none());
         assert_eq!(
-            SERVICES.get(&ServiceQuery(64738, Protocol::UDP)).unwrap(),
+            SERVICES.get(&ServiceQuery(64738, Protocol::Udp)).unwrap(),
             &Service::Name("murmur")
         );
     }

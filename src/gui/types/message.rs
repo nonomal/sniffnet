@@ -2,41 +2,59 @@ use crate::gui::components::types::my_modal::MyModal;
 use crate::gui::pages::types::running_page::RunningPage;
 use crate::gui::pages::types::settings_page::SettingsPage;
 use crate::gui::styles::types::gradient_type::GradientType;
-use crate::networking::types::host::Host;
+use crate::gui::types::favorite::FavoriteKey;
+use crate::gui::types::update_status::UpdateStatus;
+use crate::networking::traffic_preview::TrafficPreview;
+use crate::networking::types::capture_context::CaptureSourcePicklist;
+use crate::networking::types::data_representation::DataRepr;
+use crate::networking::types::host::HostMessage;
+use crate::networking::types::info_traffic::InfoTraffic;
+use crate::networking::types::ip_blacklist::IpBlacklist;
+use crate::networking::types::latency::LatencyStatus;
 use crate::notifications::types::notifications::Notification;
 use crate::report::types::search_parameters::SearchParameters;
 use crate::report::types::sort_type::SortType;
 use crate::utils::types::file_info::FileInfo;
 use crate::utils::types::web_page::WebPage;
-use crate::{ChartType, IpVersion, Language, Protocol, ReportSortType, StyleType};
+use crate::{Language, StyleType};
+use iced::window;
+use std::net::IpAddr;
 
 #[derive(Debug, Clone)]
-/// Messages types that permit to react to application interactions/subscriptions
+/// Messages types that permit reacting to application interactions/subscriptions
 pub enum Message {
-    /// Every 5 seconds
-    TickInit,
-    /// Every 1 second
-    TickRun,
-    /// Select adapter
-    AdapterSelection(String),
-    /// Select IP filter
-    IpVersionSelection(IpVersion, bool),
-    /// Select protocol filter
-    ProtocolSelection(Protocol, bool),
-    /// Changed address filter
-    AddressFilter(String),
-    /// Changed port filter
-    PortFilter(String),
-    /// Select chart type to be displayed
-    ChartSelection(ChartType),
+    /// Run tasks to initialize the app
+    StartApp(Option<window::Id>),
+    /// Animate welcome page
+    Welcome,
+    /// Sent by the backend parsing packets; includes the capture id, new data, new hosts batched data, and whether an offline capture has finished
+    TickRun(usize, InfoTraffic, Vec<HostMessage>, bool),
+    /// Capture source selected from the picklist
+    SetCaptureSource(CaptureSourcePicklist),
+    /// Select network device
+    DeviceSelection(String),
+    /// Toggle BPF filter checkbox
+    ToggleFilters,
+    /// Change BPF filter string
+    BpfFilter(String),
+    /// Select data representation to use
+    DataReprSelection(DataRepr),
     /// Select report sort type to be displayed (inspect page)
-    ReportSortSelection(ReportSortType),
+    ReportSortSelection(SortType),
     /// Select host sort type to be displayed (overview page)
     HostSortSelection(SortType),
     /// Select service sort type to be displayed (overview page)
     ServiceSortSelection(SortType),
-    /// Adds or removes the given host into/from the favorites
-    AddOrRemoveFavorite(Host, bool),
+    /// Select program sort type to be displayed (overview page)
+    ProgramSortSelection(SortType),
+    /// Toggle host favorites filter
+    HostFavoritesFilterToggle,
+    /// Toggle service favorites filter
+    ServiceFavoritesFilterToggle,
+    /// Toggle program favorites filter
+    ProgramFavoritesFilterToggle,
+    /// Adds or removes the given item into/from the favorites
+    AddOrRemoveFavorite(FavoriteKey, bool),
     /// Open the supplied web page
     OpenWebPage(WebPage),
     /// Start sniffing packets
@@ -47,8 +65,6 @@ pub enum Message {
     Style(StyleType),
     /// Deserialize a style from a path
     LoadStyle(String),
-    /// Manage waiting time
-    Waiting,
     /// Displays a modal
     ShowModal(MyModal),
     /// Opens the specified settings page
@@ -63,7 +79,7 @@ pub enum Message {
     ChangeRunningPage(RunningPage),
     /// Select language
     LanguageSelection(Language),
-    /// Set packets notification
+    /// Set notification settings
     UpdateNotificationSettings(Notification, bool),
     /// Clear all received notifications
     ClearAllNotifications,
@@ -90,19 +106,29 @@ pub enum Message {
     /// Enable or disable gradients
     GradientsSelection(GradientType),
     /// Set UI scale factor
-    ChangeScaleFactor(f64),
+    ChangeScaleFactor(f32),
     /// The app window position has been changed
-    WindowMoved(i32, i32),
+    WindowMoved(f32, f32),
     /// The app window size has been changed
-    WindowResized(u32, u32),
+    WindowResized(f32, f32),
     /// The country MMDB custom path has been updated
     CustomCountryDb(String),
     /// The ASN MMDB custom path has been updated
     CustomAsnDb(String),
+    /// Load IP blacklist from file
+    LoadIpBlacklist(String),
+    /// Set new IP blacklist content
+    SetIpBlacklist(IpBlacklist),
+    /// Wrapper around the Quit message
+    QuitWrapper,
     /// Save the configurations of the app and quit
-    CloseRequested,
+    Quit,
     /// Copies the given string to clipboard
-    CopyIp(String),
+    CopyIp(IpAddr),
+    /// Start measuring latency for the given remote address
+    MeasureLatency(IpAddr),
+    /// Latency measurement has completed for the given remote address
+    LatencyMeasured(IpAddr, LatencyStatus),
     /// Launch a new file dialog
     OpenFile(String, FileInfo, fn(String) -> Message),
     /// Toggle export pcap file
@@ -117,6 +143,42 @@ pub enum Message {
     Drag,
     /// Ctrl+T keys have been pressed
     CtrlTPressed,
+    /// Ctrl+Space keys have been pressed
+    CtrlSpacePressed,
     /// Edit scale factor via keyboard shortcut
     ScaleFactorShortcut(bool),
+    /// Check for a newer release
+    CheckNewerRelease,
+    /// Set new release status
+    SetUpdateStatus(UpdateStatus),
+    /// Toggle whether to notify about new releases
+    ToggleNotifyUpdates,
+    /// Toggle whether to check for new releases
+    ToggleDisableUpdateChecks,
+    /// Set the pcap import path
+    SetPcapImport(String),
+    /// Set the IPFIX collector bind address
+    SetIpfixAddr(String),
+    /// Set the IPFIX collector bind port
+    SetIpfixPort(String),
+    /// Sent by the backend parsing packets at the end of an offline capture; includes all the pending hosts
+    PendingHosts(usize, Vec<HostMessage>),
+    /// Sent by offline captures: ticks without packets
+    OfflineGap(usize, u32),
+    /// Sent by the IPFIX collector: incoming datagrams aren't decodable as IPFIX
+    IpfixUndecodable(usize),
+    /// Emitted every second to repeat certain tasks (such as fetching the network devices)
+    Periodic,
+    /// Expand or collapse the given logged notification
+    ExpandNotification(usize, bool),
+    /// Toggle remote notifications
+    ToggleRemoteNotifications,
+    /// The remote notifications URL has been updated
+    RemoteNotificationsUrl(String),
+    /// Pause or resume live capture
+    Freeze,
+    /// Traffic preview
+    TrafficPreview(TrafficPreview),
+    /// Toggle expanded view
+    ToggleExpandedView,
 }

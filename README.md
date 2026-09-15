@@ -5,14 +5,14 @@
 
 <a href="#download"><img alt="" title="Download" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/download.svg"/></a>
 <a href="https://github.com/GyulyVGC/sniffnet/blob/main/ROADMAP.md"><img alt="" title="Roadmap" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/roadmap.svg"/></a>
-<a href="https://sniffnet.net"><img alt="" title="Website" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/website.svg"/></a>
+<a href="https://sniffnet.app"><img alt="" title="Website" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/website.svg"/></a>
 <a href="https://github.com/GyulyVGC/sniffnet/wiki"><img alt="" title="Wiki" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/wiki.svg"/></a>
 
-Application to comfortably monitor your Internet traffic <br>
-Cross-platform, Intuitive, Reliable
+Application to comfortably monitor your network traffic.<br>
+Cross-platform. Intuitive. Reliable.
 
 Translated in:<br>
-🇨🇳 🇩🇪 🇫🇷 🇷🇺 🇵🇹 🇪🇦 🇮🇹 🇵🇱 [+&nbsp;12&nbsp;more&nbsp;languages](https://github.com/GyulyVGC/sniffnet/issues/60)
+🇨🇳 🇩🇪 🇫🇷 🇷🇺 🇵🇹 🇪🇦 🇮🇹 🇵🇱 [+&nbsp;18&nbsp;more&nbsp;languages](https://github.com/GyulyVGC/sniffnet/issues/60)
 </div>
 
 <p>
@@ -25,7 +25,7 @@ Translated in:<br>
 <img alt="" title="Overview page" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/pages/overview.png" width="95%"/>
 <img alt="" title="Inspect page" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/pages/inspect.png" width="47%"/>
 <img alt="" title="Notifications page" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/pages/notifications.png" width="47%"/>
-<img alt="" title="Custom theme" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/pages/catppuccin.png" width="47%"/>
+<img alt="" title="Custom theme" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/pages/deep_cosmos.png" width="47%"/>
 <img alt="" title="Thumbnail mode" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/pages/thumbnail.png" width="47%"/>
 </div>
 
@@ -35,156 +35,92 @@ Translated in:<br>
 </picture>
 </p>
 
-
 ## _Support Sniffnet's development_ 💖
 
-<i>Sniffnet is completely free, open-source software which needs lots of effort and time to develop and maintain.</i>
+<i>Sniffnet is completely free, open-source software which needs lots of effort and time to develop and maintain.
 
-<i>If you appreciate Sniffnet, [consider sponsoring](https://github.com/sponsors/GyulyVGC):
-your support will allow me to dedicate more time to this project,
-constantly expanding it including [new features and functionalities](https://github.com/GyulyVGC/sniffnet/blob/main/ROADMAP.md).</i>
+If you appreciate Sniffnet, [sponsor the project](https://github.com/sponsors/GyulyVGC) to support its [growth](https://github.com/GyulyVGC/sniffnet/blob/main/ROADMAP.md).
 
-<i>A special mention goes to these awesome organizations and folks who are sponsoring Sniffnet:</i>
+For sponsorship inquiries, feel free to reach out at `sponsor@sniffnet.app`.
 
-<p align="center">
-<a href="https://github.com/github" title="GitHub"><img src="https://avatars.githubusercontent.com/github?v=4" width="60px" alt="GitHub"/></a>&nbsp;&nbsp;
+A special shout-out to these awesome organizations and folks who are sponsoring Sniffnet:</i>
+
+<table><tr><td>
+<a href="https://www.recall.ai/careers?ashby_jid=7b02811e-bc91-4ef2-925d-f56a5acac13b&utm_source=github&utm_medium=sponsorship&utm_campaign=sniffnet" title="recall.ai">
+<img height="60" src="https://github.com/user-attachments/assets/5b46a13e-19e5-4924-9801-f142b651cf49" />
+</a><br>
+<blockquote><i>Processing over 3TB/s of video at peak load, <a href="https://www.recall.ai/careers?ashby_jid=7b02811e-bc91-4ef2-925d-f56a5acac13b&utm_source=github&utm_medium=sponsorship&utm_campaign=sniffnet">now hiring in SF</a></i></blockquote>
+</td></tr></table>
+
+<p>
+<a href="https://nlnet.nl" title="NLnet"><img src="https://nlnet.nl/logo/logo.svg" width="60px" alt="NLnet"/></a>&nbsp;&nbsp;
+<a href="https://www.coderabbit.ai/?utm_source=cr_org&utm_medium=github" title="CodeRabbit"><img src="https://avatars.githubusercontent.com/u/132028505?s=200&v=4" width="60px" alt="CodeRabbit"/></a>&nbsp;&nbsp;
 <a href="https://ipinfo.io" title="IPinfo"><img src="https://avatars.githubusercontent.com/ipinfo?v=4" width="60px" alt="IPinfo"/></a>&nbsp;&nbsp;
+<a href="https://ads.fund" title="ADS Fund"><img src="https://avatars.githubusercontent.com/ADS-Fund?v=4" width="60px" alt="ADS Fund"/></a>&nbsp;&nbsp;
 <a href="https://github.com/Cthulu201" title="Cthulu201"><img src="https://avatars.githubusercontent.com/Cthulu201?v=4" width="60px" alt="Cthulu201"/></a>&nbsp;&nbsp;
-<a href="https://github.com/0x0177b11f" title="Tiansheng Li"><img src="https://avatars.githubusercontent.com/0x0177b11f?v=4" width="60px" alt="Tiansheng Li"/></a>&nbsp;&nbsp;
 <a href="https://github.com/ZEROF" title="ZEROF"><img src="https://avatars.githubusercontent.com/ZEROF?v=4" width="60px" alt="ZEROF"/></a>&nbsp;&nbsp;
 <a href="https://www.janwalter.org/" title="Jan Walter"><img src="https://avatars.githubusercontent.com/wahn?v=4" width="60px" alt="Jan Walter"/></a>
+<a href="https://linktr.ee/golanbenoni" title="Golan Ben-Oni"><img src="https://ugc.production.linktr.ee/eed0c0ea-b302-4286-b940-1e4740d4f54d_84D5JxCc-400x400.jpeg?io=true&size=avatar-v3_0" width="60px" alt="Golan Ben-Oni"/></a>
 </p>
-
 
 ## Download
 
-|                                                                        <a href="#download"><img alt="Windows" title="Windows" height="35px" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/windows.svg"/></a>                                                                         |                           <a href="#download"><img alt="macOS" title="macOS" height="35px" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/macos.svg"/></a>                            |                                                                                                                          <a href="#download"><img alt="Linux (.deb)" title="Linux (.deb)" height="35px" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/linux_deb.svg"/></a>                                                                                                                           |                                                              <a href="#download"><img alt="Linux (.rpm)" title="Linux (.rpm)" height="35px" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/linux_rpm.svg"/></a>                                                               |
-|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|
-| &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[64&#8209;bit](https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_Windows_64-bit.msi)&nbsp;\|&nbsp;[32&#8209;bit](https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_Windows_32-bit.msi)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | [Intel](https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_macOS_Intel.dmg)&nbsp;\|&nbsp;[Apple&nbsp;silicon](https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_macOS_AppleSilicon.dmg) | [amd64](https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxDEB_amd64.deb)&nbsp;\|&nbsp;[arm64](https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxDEB_arm64.deb)&nbsp;\|&nbsp;[i386](https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxDEB_i386.deb)&nbsp;\|&nbsp;[armhf](https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxDEB_armhf.deb) | &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;[x86_64](https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxRPM_x86_64.rpm)&nbsp;\|&nbsp;[aarch64](https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxRPM_aarch64.rpm)&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; |
+<picture><img height="28px" alt="" title="Downloads count" src="https://raw.githubusercontent.com/sniffnet/sniffnet.github.io/main/assets/img/badges/downloads_badge.svg"/></picture>
+<a href="https://github.com/GyulyVGC/sniffnet/releases/latest"><img height="28px" alt="" title="Latest version" src="https://raw.githubusercontent.com/sniffnet/sniffnet.github.io/main/assets/img/badges/version_badge.svg"/></a>
+
+<table>
+  <tr>
+    <td>
+      <picture><img alt="Windows" title="Windows" height="85px" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/windows.svg"/></picture>
+    </td>
+    <td>
+      <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_Windows_x64.msi">x64</a> | <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_Windows_arm64.msi">arm64</a> | <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_Windows_x86.msi">x86</a>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <picture><img alt="macOS" title="macOS" height="85px" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/macos.svg"/></picture>
+    </td>
+    <td>
+      <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_macOS_Intel.dmg">Intel</a> | <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_macOS_AppleSilicon.dmg">Apple silicon</a>
+    </td>
+  </tr>
+  <tr>
+    <td>
+      <picture><img alt="Linux" title="Linux" height="85px" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/linux.svg"/></picture>
+    </td>
+    <td>
+      DEB: <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxDEB_amd64.deb">amd64</a> | <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxDEB_arm64.deb">arm64</a> | <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxDEB_i386.deb">i386</a> | <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxDEB_armhf.deb">armhf</a><br>
+      RPM: <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxRPM_x86_64.rpm">x86_64</a> | <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxRPM_aarch64.rpm">aarch64</a><br>
+      AppImage: <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxAppImage_amd64.AppImage">amd64</a> | <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxAppImage_arm64.AppImage">arm64</a> | <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxAppImage_i386.AppImage">i386</a> | <a href="https://github.com/GyulyVGC/sniffnet/releases/latest/download/Sniffnet_LinuxAppImage_armhf.AppImage">armhf</a>
+    </td>
+  </tr>
+</table>
 
 Links in the table above will download the latest version of Sniffnet directly from [GitHub releases](https://github.com/GyulyVGC/sniffnet/releases). <br>
+Not what you're looking for? Check out [alternative installation methods](https://github.com/GyulyVGC/sniffnet/wiki/Alternative-installation-methods).
 
 > [!NOTE]
 >
 > Remember to also install the [required dependencies](https://github.com/GyulyVGC/sniffnet/wiki/Required-dependencies) for your operating system.
 
-**Alternative installation methods** are reported in the following:
-
-<details>
-
-  <summary>from Crates.io</summary>
-
-Follow this method only if you have [Rust installed](https://www.rust-lang.org/tools/install) on your machine. <br>
-In this case, the application binary can be built and installed with:
-
-```sh
-cargo install sniffnet --locked
-```
-
-</details>
-
-
-<details>
-
-  <summary>from Homebrew</summary>
-
-  You can install [Sniffnet Homebrew package](https://github.com/Homebrew/homebrew-core/pkgs/container/core%2Fsniffnet) with:
-
-  ```sh
-brew install sniffnet
-```
-
-</details>
-
-<details>
-
-  <summary>from Nixpkgs</summary>
-
-  You can install [Sniffnet Nix package](https://search.nixos.org/packages?channel=23.05&show=sniffnet&from=0&size=50&sort=relevance&type=packages&query=sniffnet) adding the following Nix code to your NixOS Configuration, usually located in `/etc/nixos/configuration.nix`:
-
-  ```nix
-  environment.systemPackages = [
-    pkgs.sniffnet
-  ];
-```
-
-  Alternatively, you can install it in your home using [Home Manager](https://github.com/nix-community/home-manager) with:
-
-  ```nix
-  home.packages = [
-    pkgs.sniffnet
-  ];
-```
-
-  Alternatively, you can try it in a shell with:
-  ```sh
-nix-shell -p sniffnet
-```
-
-</details>
-
-<details>
-
-  <summary>on Arch Linux</summary>
-
-  You can install Sniffnet community package via [pacman](https://wiki.archlinux.org/title/Pacman):
-
-  ```sh
-pacman -S sniffnet
-```
-
-</details>
-
-<details>
-
-  <summary>on FreeBSD</summary>
-
-You can install Sniffnet port with:
-
-  ```sh
-pkg install sniffnet
-```
-
-</details>
-
-<details>
-
-  <summary>on NetBSD</summary>
-
-You can install Sniffnet from the official repositories via [pkgin](https://pkgin.net):
-
-  ```sh
-pkgin install sniffnet
-```
-
-</details>
-<details>
-
-  <summary>on Tiny Core Linux</summary>
-
-You can install Sniffnet from the official repository with:
-
-  ```
-tce-load -wi sniffnet
-```
-
-</details>
-
 ## Features
 
 - 💻 choose a **network adapter** of your PC to inspect
 - 🏷️ select a set of **filters** to apply to the observed traffic
-- 📖 view overall **statistics** about your Internet traffic
+- 📁 **import** and **export** comprehensive capture reports as **PCAP** files
+- 📊 view overall **statistics** about your Internet traffic
 - 📈 view **real-time charts** about traffic intensity
-- 📌 keep an eye on your network even when the application is **minimized**
-- 📁 **export** comprehensive capture reports as **PCAP files**
-- 🔎 identify **6000+ upper layer services**, protocols, trojans, and worms
-- 🌐 find out **domain name** and **ASN** of the hosts you are exchanging traffic with
 - 🏠 identify connections in your **local network**
-- 🌍 get information about the country of remote hosts (**IP geolocation**)
-- ⭐ save your **favorite** network hosts
-- 🕵️‍♂️ search and **inspect** each of your network connections in real time
-- 🔉 set **custom notifications** to inform you when defined network events occur
+- 🌍 discover the **geographical location** of remote hosts
+- 🌐 find out **domain name** and **ASN** of the hosts you are exchanging traffic with
+- 📖 identify **6000+ upper layer services**, protocols, trojans, and worms
+- 🎮 see which **programs** are generating network bandwidth
+- ⭐ save your **favorite** network hosts, services, and programs
+- 📌 keep an eye on your network even when the application is **minimized**
+- ️🔎 search and **inspect** each of your network connections in real time
+- 🔉 set custom **notifications** to inform you when defined network events occur
+- 🚫 import custom **IP blacklists** to highlight potentially dangerous connections
 - 🎨 choose the **style** that fits you the most, including custom themes support
 - ...and more!
 
@@ -230,17 +166,38 @@ ICED_BACKEND=tiny-skia
 
 </details>
 
-
 ## Acknowledgements
 
 - A big shout-out to [all the contributors](https://github.com/GyulyVGC/sniffnet/blob/main/CONTRIBUTORS.md) of Sniffnet!
-
 - The graphical user interface has been realized with [iced](https://github.com/iced-rs/iced), a cross-platform GUI library for Rust focused on simplicity and type-safety
-
-<p align="center">
-<a href="https://github.com/iced-rs/iced">
-<img alt="" title="iced" src="https://user-images.githubusercontent.com/100347457/219339409-0a44722b-416d-410b-93a4-8b0e84c0031d.svg" width="350px"/>
-</a>
-</p>
-
+- IP geolocation and ASN data are provided by [MaxMind](https://www.maxmind.com)
+- Free code signing for Windows Installer is provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/)
+- [Sniffnet](https://ads.fund/token/0xadfc251f8ef00ceaeca2b5c1882dabe5db0833df) project is supported by ADS.FUND
 - Last but not least, thanks to [every single stargazer](https://github.com/GyulyVGC/sniffnet/stargazers): all forms of support made it possible to keep improving Sniffnet!
+
+## Stay in the loop
+
+Wait... there's more!<br>Sniffnet is rapidly evolving, and new features are added on a regular basis.<br>
+Follow the <a href="https://sniffnet.app/news/"><b>news</b></a> and Sniffnet socials to never miss an update.
+
+<table align="center">
+  <tr>
+    <td>
+      <a href="https://bsky.app/profile/sniffnet.app"><img width="48" height="48" alt="Bluesky" title="Bluesky" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/bluesky.svg"/></a>
+    </td>
+    <td>
+      <a href="https://www.linkedin.com/company/sniffnet"><img width="48" height="48" alt="LinkedIn" title="LinkedIn" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/linkedin.svg"/></a>
+    </td>
+    <td>
+      <a href="https://mastodon.social/@sniffnet"><img width="48" height="48" alt="Mastodon" title="Mastodon" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/mastodon.svg"/></a>
+    </td>
+    <td>
+      <a href="https://t.me/sniffnet"><img width="48" height="48" alt="Telegram" title="Telegram" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/telegram.svg"/></a>
+    </td>
+    <td>
+      <a href="https://x.com/sniffnet"><img width="48" height="48" alt="Twitter / X" title="Twitter / X" src="https://raw.githubusercontent.com/GyulyVGC/sniffnet/main/resources/repository/badges/x.svg"/></a>
+    </td>
+  </tr>
+</table>
+
+You can also reach us by email at `info@sniffnet.app`.

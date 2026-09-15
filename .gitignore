@@ -55,6 +55,9 @@ $RECYCLE.BIN/
 *.lnk
 
 ### Custom... ###
-Dockerfile
 lcov.info
 *.pcap
+node_modules
+package.json
+yarn.lock
+*.bkp

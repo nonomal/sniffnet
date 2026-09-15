@@ -1,43 +1,62 @@
 //! Module defining the `AddressPortPair` struct, which represents a network address:port pair.
 
 use crate::Protocol;
+use crate::networking::types::ipfix_exporter::IpfixExporter;
+use sniffnet_packet_parser::ParsedPacket;
+use std::net::IpAddr;
 
 /// Struct representing a network address:port pair.
-#[derive(PartialEq, Eq, Hash, Clone, Debug)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy, Debug)]
 pub struct AddressPortPair {
     /// Network layer IPv4 or IPv6 source address.
-    pub address1: String,
+    pub src_ip: IpAddr,
     /// Transport layer source port number (in the range 0..=65535).
-    pub port1: Option<u16>,
+    pub src_port: Option<u16>,
     /// Network layer IPv4 or IPv6 destination address.
-    pub address2: String,
+    pub dst_ip: IpAddr,
     /// Transport layer destination port number (in the range 0..=65535).
-    pub port2: Option<u16>,
+    pub dst_port: Option<u16>,
     ///  Transport layer protocol carried through the associate address:port pair (TCP or UPD).
     pub protocol: Protocol,
+    /// Exporter the flow was reported by; `None` non-IPFIX captures.
+    pub exporter: Option<IpfixExporter>,
 }
 
 impl AddressPortPair {
-    /// Returns a new `AddressPort` element.
-    ///
-    /// # Arguments
-    ///
-    /// * `address` - A string representing the network layer IPv4 or IPv6 address.
-    ///
-    /// * `port` - An integer representing the transport layer port number (in the range 0..=65535).
+    pub fn from_parsed_packet(parsed: &ParsedPacket) -> Self {
+        let src_ip = parsed.net_info.src_ip;
+        let src_port = parsed.transport_info.src_port;
+        let dst_ip = parsed.net_info.dst_ip;
+        let dst_port = parsed.transport_info.dst_port;
+        let protocol = parsed.transport_info.protocol;
+
+        Self {
+            src_ip,
+            src_port,
+            dst_ip,
+            dst_port,
+            protocol,
+            exporter: None,
+        }
+    }
+}
+
+#[cfg(test)]
+impl AddressPortPair {
     pub fn new(
-        address1: String,
-        port1: Option<u16>,
-        address2: String,
-        port2: Option<u16>,
+        src_ip: IpAddr,
+        src_port: Option<u16>,
+        dst_ip: IpAddr,
+        dst_port: Option<u16>,
         protocol: Protocol,
     ) -> Self {
         AddressPortPair {
-            address1,
-            port1,
-            address2,
-            port2,
+            src_ip,
+            src_port,
+            dst_ip,
+            dst_port,
             protocol,
+            exporter: None,
         }
     }
 }

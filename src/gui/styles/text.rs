@@ -2,14 +2,13 @@
 
 #![allow(clippy::module_name_repetitions)]
 
-use iced::widget::text::Appearance;
-use iced::widget::{Column, Text};
-use iced::{Color, Font};
-
-use crate::gui::types::message::Message;
 use crate::StyleType;
+use crate::gui::types::message::Message;
+use iced::Color;
+use iced::widget::text::{Catalog, Style};
+use iced::widget::{Column, Text};
 
-#[derive(Clone, Copy, Default, PartialEq)]
+#[derive(Copy, Clone, Default, PartialEq)]
 pub enum TextType {
     #[default]
     Standard,
@@ -19,42 +18,35 @@ pub enum TextType {
     Subtitle,
     Danger,
     Sponsor,
-    Starred,
+    Welcome(f32),
+    Dimmed,
 }
 
 /// Returns a formatted caption followed by subtitle, new line, tab, and desc
 impl TextType {
-    pub fn highlighted_subtitle_with_desc(
+    pub fn highlighted_subtitle_with_desc<'a>(
         subtitle: &str,
         desc: &str,
-        font: Font,
-    ) -> Column<'static, Message, StyleType> {
+    ) -> Column<'a, Message, StyleType> {
         Column::new()
-            .push(
-                Text::new(format!("{subtitle}:"))
-                    .style(TextType::Subtitle)
-                    .font(font),
-            )
-            .push(Text::new(format!("   {desc}")).font(font))
+            .push(Text::new(format!("{subtitle}:")).class(TextType::Subtitle))
+            .push(Text::new(format!("   {desc}")))
     }
-}
 
-impl iced::widget::text::StyleSheet for StyleType {
-    type Style = TextType;
-
-    fn appearance(&self, style: Self::Style) -> Appearance {
-        Appearance {
-            color: if style == TextType::Standard {
+    fn appearance(self, style: &StyleType) -> Style {
+        Style {
+            color: if self == TextType::Standard {
                 None
             } else {
-                Some(highlight(*self, style))
+                Some(highlight(style, self))
             },
         }
     }
 }
 
-pub fn highlight(style: StyleType, element: TextType) -> Color {
+pub fn highlight(style: &StyleType, element: TextType) -> Color {
     let colors = style.get_palette();
+    let ext = style.get_extension();
     let secondary = colors.secondary;
     let is_nightly = style.get_extension().is_nightly;
     match element {
@@ -76,11 +68,31 @@ pub fn highlight(style: StyleType, element: TextType) -> Color {
                 a: 1.0,
             }
         }
+        TextType::Welcome(mut n) => {
+            if !(0.0..=1.0).contains(&n) {
+                n = 1.0;
+            }
+            Color { a: n, ..secondary }
+        }
         TextType::Incoming => colors.secondary,
         TextType::Outgoing => colors.outgoing,
-        TextType::Danger => Color::from_rgb(0.8, 0.15, 0.15),
-        TextType::Sponsor => Color::from_rgb(1.0, 0.3, 0.5),
+        TextType::Danger | TextType::Sponsor => ext.red_alert_color,
         TextType::Standard => colors.text_body,
-        TextType::Starred => colors.starred,
+        TextType::Dimmed => Color {
+            a: ext.alpha_chart_badge,
+            ..colors.text_body
+        },
+    }
+}
+
+impl Catalog for StyleType {
+    type Class<'a> = TextType;
+
+    fn default<'a>() -> Self::Class<'a> {
+        Self::Class::default()
+    }
+
+    fn style(&self, class: &Self::Class<'_>) -> Style {
+        class.appearance(self)
     }
 }

@@ -3,13 +3,13 @@ use crate::translations::translations::{notifications_translation, overview_tran
 use crate::translations::translations_2::inspect_translation;
 use crate::utils::types::icon::Icon;
 use crate::{Language, StyleType};
+use serde::{Deserialize, Serialize};
 
-/// This enum defines the current GUI page.
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+/// This enum defines the current running page.
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize, Default)]
 pub enum RunningPage {
-    /// Initial page.
-    Init,
     /// Overview page.
+    #[default]
     Overview,
     /// Inspect page.
     Inspect,
@@ -29,7 +29,6 @@ impl RunningPage {
             RunningPage::Overview => overview_translation(language),
             RunningPage::Inspect => inspect_translation(language),
             RunningPage::Notifications => notifications_translation(language),
-            RunningPage::Init => "",
         }
     }
 
@@ -38,7 +37,6 @@ impl RunningPage {
             RunningPage::Overview => RunningPage::Inspect,
             RunningPage::Inspect => RunningPage::Notifications,
             RunningPage::Notifications => RunningPage::Overview,
-            RunningPage::Init => RunningPage::Init,
         }
     }
 
@@ -47,16 +45,14 @@ impl RunningPage {
             RunningPage::Overview => RunningPage::Notifications,
             RunningPage::Inspect => RunningPage::Overview,
             RunningPage::Notifications => RunningPage::Inspect,
-            RunningPage::Init => RunningPage::Init,
         }
     }
 
-    pub fn icon(self) -> iced::widget::Text<'static, StyleType> {
+    pub fn icon<'a>(self) -> iced::widget::Text<'a, StyleType> {
         match self {
             RunningPage::Overview => Icon::Overview,
             RunningPage::Inspect => Icon::Inspect,
             RunningPage::Notifications => Icon::Notification,
-            RunningPage::Init => Icon::Sniffnet,
         }
         .to_text()
     }

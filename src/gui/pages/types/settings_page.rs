@@ -3,11 +3,13 @@ use crate::translations::translations::{notifications_translation, style_transla
 use crate::translations::translations_3::general_translation;
 use crate::utils::types::icon::Icon;
 use crate::{Language, StyleType};
+use serde::{Deserialize, Serialize};
 
 /// This enum defines the current settings page.
-#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Debug, Serialize, Deserialize, Default)]
 pub enum SettingsPage {
     /// Settings Notifications page.
+    #[default]
     Notifications,
     /// Settings Appearance page.
     Appearance,
@@ -46,7 +48,7 @@ impl SettingsPage {
         }
     }
 
-    pub fn icon(self) -> iced::widget::Text<'static, StyleType> {
+    pub fn icon<'a>(self) -> iced::widget::Text<'a, StyleType> {
         match self {
             SettingsPage::Notifications => Icon::Notification,
             SettingsPage::Appearance => Icon::HalfSun,
